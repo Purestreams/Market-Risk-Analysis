@@ -1,0 +1,2 @@
+return_autocorr_lag1,return_autocorr_lag24,abs_return_autocorr_lag1,abs_return_autocorr_lag24,ljung_box_return_pvalue_lag24,ljung_box_abs_return_pvalue_lag24
+-0.004723928917748041,-0.026226805023620525,0.28470796420916783,0.19042051417007533,2.5141926368275225e-12,0.0

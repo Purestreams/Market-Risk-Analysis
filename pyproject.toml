@@ -1,0 +1,30 @@
+[project]
+name = "market-risk-analysis"
+version = "0.1.0"
+description = "End-to-end Bitcoin market risk analysis with statistical tests, VaR models, simulation, and reporting"
+readme = "README.md"
+authors = [
+    { name = "Mio", email = "git@amiya.eu.org" }
+]
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "intel-npu-acceleration-library>=1.4.0",
+    "matplotlib>=3.10.1",
+    "numpy>=2.2.4",
+    "pandas>=2.2.3",
+    "prettytable>=3.16.0",
+    "psutil>=7.2.2",
+    "py-cpuinfo>=9.0.0",
+    "requests>=2.32.3",
+    "scikit-learn>=1.6.1",
+    "scipy>=1.15.2",
+    "statsmodels>=0.14.4",
+    "torch>=2.7.0",
+]
+
+[project.scripts]
+market-risk-analysis = "market_risk_analysis.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.10.12,<0.11.0"]
+build-backend = "uv_build"

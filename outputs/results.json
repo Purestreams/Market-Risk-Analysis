@@ -1,0 +1,398 @@
+{
+  "data_quality": {
+    "original_rows": 46265,
+    "cleaned_rows": 46279,
+    "missing_hours_filled": 14,
+    "duplicate_rows_removed": 0,
+    "flash_crash_repairs": 0,
+    "start": "2021-01-01T00:00:00+00:00",
+    "end": "2026-04-13T06:00:00+00:00"
+  },
+  "descriptive_statistics": {
+    "observations": 46278.0,
+    "mean": 1.9359479267623318e-05,
+    "std": 0.006362273718778532,
+    "skewness": -0.20660918909115747,
+    "kurtosis": 18.955076990423116,
+    "jarque_bera_stat": 491079.1521472282,
+    "jarque_bera_pvalue": 0.0,
+    "adf_stat": -30.2083517283776,
+    "adf_pvalue": 0.0,
+    "adf_critical_1pct": -3.4304914745954354,
+    "adf_critical_5pct": -2.8616025287531466,
+    "adf_critical_10pct": -2.566803282006879,
+    "min": -0.09381047804599696,
+    "max": 0.11614521215272866,
+    "p01": -0.019252113127786432,
+    "p99": 0.018603125092989004
+  },
+  "current_var_estimates": [
+    {
+      "model": "Jump diffusion Monte Carlo",
+      "horizon_hours": 1,
+      "VaR_return": -0.014813333606040148,
+      "CVaR_return": -0.027165583015299095,
+      "VaR_loss": 0.014813333606040148,
+      "CVaR_loss": 0.027165583015299095,
+      "mean_return": -0.000234669025589211,
+      "volatility": 0.006533229207722137
+    },
+    {
+      "model": "LSTM",
+      "horizon_hours": 1,
+      "VaR_return": -0.010786254445739989,
+      "CVaR_return": -0.012487072855963836,
+      "VaR_loss": 0.010786254445739989,
+      "CVaR_loss": 0.012487072855963836,
+      "mean_return": 0.0008900165557861328,
+      "volatility": 0.005019142292439938
+    },
+    {
+      "model": "Parametric Student-t",
+      "horizon_hours": 1,
+      "VaR_return": -0.014663186282569978,
+      "CVaR_return": -0.01922970397992762,
+      "VaR_loss": 0.014663186282569978,
+      "CVaR_loss": 0.01922970397992762,
+      "mean_return": -0.0001337584247651982,
+      "volatility": 0.0055839603058758375
+    },
+    {
+      "model": "VAE",
+      "horizon_hours": 1,
+      "VaR_return": -0.011529107578098774,
+      "CVaR_return": -0.013873346149921417,
+      "VaR_loss": 0.011529107578098774,
+      "CVaR_loss": 0.013873346149921417,
+      "mean_return": -0.00017545795708429068,
+      "volatility": 0.004116002004593611
+    },
+    {
+      "model": "Jump diffusion Monte Carlo",
+      "horizon_hours": 24,
+      "VaR_return": -0.08265217223649313,
+      "CVaR_return": -0.09710138314863803,
+      "VaR_loss": 0.08265217223649313,
+      "CVaR_loss": 0.09710138314863803,
+      "mean_return": -0.004860086698661881,
+      "volatility": 0.031705261680840514
+    },
+    {
+      "model": "Parametric Student-t",
+      "horizon_hours": 24,
+      "VaR_return": -0.06749018821879511,
+      "CVaR_return": -0.07915130490782649,
+      "VaR_loss": 0.06749018821879511,
+      "CVaR_loss": 0.07915130490782649,
+      "mean_return": -0.0028593889013540934,
+      "volatility": 0.027178920879150064
+    },
+    {
+      "model": "VAE",
+      "horizon_hours": 24,
+      "VaR_return": -0.032055266201496124,
+      "CVaR_return": -0.03714440017938614,
+      "VaR_loss": 0.032055266201496124,
+      "CVaR_loss": 0.03714440017938614,
+      "mean_return": 0.0003513205156195909,
+      "volatility": 0.01297011785209179
+    }
+  ],
+  "confidence_sensitivity": [
+    {
+      "confidence_level_pct": 95.0,
+      "model": "Jump diffusion Monte Carlo",
+      "VaR_loss": 0.00981190961574202,
+      "CVaR_loss": 0.01393676159831096,
+      "volatility": 0.006317638732745461
+    },
+    {
+      "confidence_level_pct": 95.0,
+      "model": "Parametric Student-t",
+      "VaR_loss": 0.008872787706885139,
+      "CVaR_loss": 0.012620869256694554,
+      "volatility": 0.005591094149779927
+    },
+    {
+      "confidence_level_pct": 95.0,
+      "model": "LSTM",
+      "VaR_loss": 0.007365737848119225,
+      "CVaR_loss": 0.00946303253353191,
+      "volatility": 0.005019142292439938
+    },
+    {
+      "confidence_level_pct": 95.0,
+      "model": "VAE",
+      "VaR_loss": 0.006980550475418568,
+      "CVaR_loss": 0.009700504131615162,
+      "volatility": 0.004116002004593611
+    },
+    {
+      "confidence_level_pct": 97.5,
+      "model": "Jump diffusion Monte Carlo",
+      "VaR_loss": 0.011828691441194314,
+      "CVaR_loss": 0.017092866534745014,
+      "volatility": 0.006340248333615182
+    },
+    {
+      "confidence_level_pct": 97.5,
+      "model": "Parametric Student-t",
+      "VaR_loss": 0.011171519539613104,
+      "CVaR_loss": 0.015304810164975922,
+      "volatility": 0.005587886033881705
+    },
+    {
+      "confidence_level_pct": 97.5,
+      "model": "LSTM",
+      "VaR_loss": 0.008947321570677949,
+      "CVaR_loss": 0.010843748309936155,
+      "volatility": 0.005019142292439938
+    },
+    {
+      "confidence_level_pct": 97.5,
+      "model": "VAE",
+      "VaR_loss": 0.008850174024701118,
+      "CVaR_loss": 0.011499691754579544,
+      "volatility": 0.004116002004593611
+    },
+    {
+      "confidence_level_pct": 99.0,
+      "model": "Jump diffusion Monte Carlo",
+      "VaR_loss": 0.015606931862193663,
+      "CVaR_loss": 0.025745514990175702,
+      "volatility": 0.006431783972487691
+    },
+    {
+      "confidence_level_pct": 99.0,
+      "model": "Parametric Student-t",
+      "VaR_loss": 0.014772361566942942,
+      "CVaR_loss": 0.019580912701661433,
+      "volatility": 0.005628554935302692
+    },
+    {
+      "confidence_level_pct": 99.0,
+      "model": "VAE",
+      "VaR_loss": 0.011529107578098774,
+      "CVaR_loss": 0.013873346149921417,
+      "volatility": 0.004116002004593611
+    },
+    {
+      "confidence_level_pct": 99.0,
+      "model": "LSTM",
+      "VaR_loss": 0.010786254445739989,
+      "CVaR_loss": 0.012487072855963836,
+      "volatility": 0.005019142292439938
+    }
+  ],
+  "student_t_parameter_sensitivity": [
+    {
+      "degrees_of_freedom": 4.5,
+      "VaR_return": -0.01478191914457289,
+      "VaR_loss": 0.01478191914457289,
+      "tail_ratio_to_sigma": 2.650554008007345,
+      "is_estimated_setting": 0.0
+    },
+    {
+      "degrees_of_freedom": 5.0,
+      "VaR_return": -0.014656745538404629,
+      "VaR_loss": 0.014656745538404629,
+      "tail_ratio_to_sigma": 2.6281090602112513,
+      "is_estimated_setting": 0.0
+    },
+    {
+      "degrees_of_freedom": 6.0,
+      "VaR_return": -0.014430960921841164,
+      "VaR_loss": 0.014430960921841164,
+      "tail_ratio_to_sigma": 2.587623497103675,
+      "is_estimated_setting": 0.0
+    },
+    {
+      "degrees_of_freedom": 8.0,
+      "VaR_return": -0.014109894791145529,
+      "VaR_loss": 0.014109894791145529,
+      "tail_ratio_to_sigma": 2.53005295357495,
+      "is_estimated_setting": 0.0
+    },
+    {
+      "degrees_of_freedom": 12.0,
+      "VaR_return": -0.013769689852506354,
+      "VaR_loss": 0.013769689852506354,
+      "tail_ratio_to_sigma": 2.4690506199243143,
+      "is_estimated_setting": 0.0
+    },
+    {
+      "degrees_of_freedom": 20.0,
+      "VaR_return": -0.01349555333597655,
+      "VaR_loss": 0.01349555333597655,
+      "tail_ratio_to_sigma": 2.4198950511837007,
+      "is_estimated_setting": 0.0
+    }
+  ],
+  "lstm_window_sensitivity": [
+    {
+      "lookback_hours": 24,
+      "best_validation_loss": -4.710350036621094,
+      "sigma_tracking_mae": 0.0032733629923313856,
+      "current_VaR_loss": 0.009075156422207945,
+      "current_sigma": 0.004647528287023306
+    },
+    {
+      "lookback_hours": 48,
+      "best_validation_loss": -4.742692947387695,
+      "sigma_tracking_mae": 0.003595866961404681,
+      "current_VaR_loss": 0.010786254445739989,
+      "current_sigma": 0.005019142292439938
+    },
+    {
+      "lookback_hours": 72,
+      "best_validation_loss": -4.6586151123046875,
+      "sigma_tracking_mae": 0.004550858400762081,
+      "current_VaR_loss": 0.01640005631904812,
+      "current_sigma": 0.006697364151477814
+    }
+  ],
+  "stress_test_analysis": [
+    {
+      "event": "FTX Collapse",
+      "event_timestamp": "2022-11-08T17:00:00+00:00",
+      "actual_return": -0.05180172985546072,
+      "actual_loss": 0.05180172985546072,
+      "student_t_VaR_loss": 0.014580950479301408,
+      "mc_VaR_loss": 0.015195407513646394,
+      "student_t_peak_warning_loss": 0.014505489926347911,
+      "mc_peak_warning_loss": 0.016132986131213466,
+      "student_t_peak_warning_hours_before_event": 8.0,
+      "mc_peak_warning_hours_before_event": 22.0,
+      "strongest_warning_model": "Jump diffusion Monte Carlo",
+      "closest_model_to_realized_loss": "Jump diffusion Monte Carlo"
+    },
+    {
+      "event": "Spot ETF Approval Whipsaw",
+      "event_timestamp": "2024-01-11T15:00:00+00:00",
+      "actual_return": -0.03749461277415023,
+      "actual_loss": 0.03749461277415023,
+      "student_t_VaR_loss": 0.012276493220105055,
+      "mc_VaR_loss": 0.012349427327636319,
+      "student_t_peak_warning_loss": 0.012361754831148496,
+      "mc_peak_warning_loss": 0.012398149474391426,
+      "student_t_peak_warning_hours_before_event": 11.0,
+      "mc_peak_warning_hours_before_event": 3.0,
+      "strongest_warning_model": "Jump diffusion Monte Carlo",
+      "closest_model_to_realized_loss": "Jump diffusion Monte Carlo"
+    }
+  ],
+  "time_scale_scaling": [
+    {
+      "horizon": "1 day",
+      "sqrt_time_scaled_VaR": 0.09431570726682836,
+      "empirical_VaR": 0.08735435623816427,
+      "scaling_bias_pct": 7.969094305594278
+    },
+    {
+      "horizon": "10 days",
+      "sqrt_time_scaled_VaR": 0.2982524540928718,
+      "empirical_VaR": 0.2766172902744559,
+      "scaling_bias_pct": 7.821334594431819
+    }
+  ],
+  "autocorrelation_summary": [
+    {
+      "return_autocorr_lag1": -0.004723928917748041,
+      "return_autocorr_lag24": -0.026226805023620525,
+      "abs_return_autocorr_lag1": 0.28470796420916783,
+      "abs_return_autocorr_lag24": 0.19042051417007533,
+      "ljung_box_return_pvalue_lag24": 2.5141926368275225e-12,
+      "ljung_box_abs_return_pvalue_lag24": 0.0
+    }
+  ],
+  "capital_requirements": [
+    {
+      "position_notional_usd": 1000000,
+      "model": "Jump diffusion Monte Carlo",
+      "horizon_hours": 1,
+      "VaR_capital_usd": 14813.333606040149,
+      "CVaR_capital_usd": 27165.583015299097
+    },
+    {
+      "position_notional_usd": 1000000,
+      "model": "Parametric Student-t",
+      "horizon_hours": 1,
+      "VaR_capital_usd": 14663.186282569977,
+      "CVaR_capital_usd": 19229.703979927617
+    },
+    {
+      "position_notional_usd": 1000000,
+      "model": "VAE",
+      "horizon_hours": 1,
+      "VaR_capital_usd": 11529.107578098774,
+      "CVaR_capital_usd": 13873.346149921417
+    },
+    {
+      "position_notional_usd": 1000000,
+      "model": "LSTM",
+      "horizon_hours": 1,
+      "VaR_capital_usd": 10786.254445739989,
+      "CVaR_capital_usd": 12487.072855963836
+    },
+    {
+      "position_notional_usd": 1000000,
+      "model": "Jump diffusion Monte Carlo",
+      "horizon_hours": 24,
+      "VaR_capital_usd": 82652.17223649313,
+      "CVaR_capital_usd": 97101.38314863804
+    },
+    {
+      "position_notional_usd": 1000000,
+      "model": "Parametric Student-t",
+      "horizon_hours": 24,
+      "VaR_capital_usd": 67490.18821879511,
+      "CVaR_capital_usd": 79151.30490782649
+    },
+    {
+      "position_notional_usd": 1000000,
+      "model": "VAE",
+      "horizon_hours": 24,
+      "VaR_capital_usd": 32055.266201496124,
+      "CVaR_capital_usd": 37144.40017938614
+    }
+  ],
+  "backtest_summary": [
+    {
+      "model": "Parametric t-VaR",
+      "observations": 8761.0,
+      "violations": 129.0,
+      "expected_violation_rate": 0.010000000000000009,
+      "observed_violation_rate": 0.014724346535783587,
+      "kupiec_lr": 17.242483282185503,
+      "kupiec_pvalue": 3.289965754627033e-05
+    },
+    {
+      "model": "Jump diffusion Monte Carlo",
+      "observations": 8761.0,
+      "violations": 128.0,
+      "expected_violation_rate": 0.010000000000000009,
+      "observed_violation_rate": 0.014610204314575962,
+      "kupiec_lr": 16.46696967743719,
+      "kupiec_pvalue": 4.9505063523413995e-05
+    },
+    {
+      "model": "LSTM conditional VaR",
+      "observations": 8761.0,
+      "violations": 81.0,
+      "expected_violation_rate": 0.010000000000000009,
+      "observed_violation_rate": 0.0092455199178176,
+      "kupiec_lr": 0.5167855040756422,
+      "kupiec_pvalue": 0.47221612481411157
+    },
+    {
+      "model": "VAE latent VaR",
+      "observations": 8761.0,
+      "violations": 138.0,
+      "expected_violation_rate": 0.010000000000000009,
+      "observed_violation_rate": 0.01575162652665221,
+      "kupiec_lr": 24.916277189348648,
+      "kupiec_pvalue": 5.987474865909448e-07
+    }
+  ],
+  "report_path": "C:\\Users\\mio.zhu\\Documents\\Market-Risk-Analysis\\outputs\\report.md"
+}
