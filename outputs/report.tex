@@ -14,7 +14,11 @@ Binance as a USD proxy. The design goal is not only to report a single
 Value at Risk number, but to show why a heavy-tailed, simulation-based,
 and neural-network-enhanced workflow is justified for crypto assets
 whose distributions are non-Gaussian, clustered in volatility, and
-punctuated by jumps.
+punctuated by jumps. At the same time, the empirical conclusions must be
+read with explicit caution: the benchmark uses a stablecoin proxy rather
+than a true fiat BTC/USD venue, the neural models are only partially
+validated out of sample, and the reported VaR figures are market-risk
+estimates rather than liquidity-adjusted liquidation costs.
 
 \hypertarget{data-engineering}{%
 \subsection{Data Engineering}\label{data-engineering}}
@@ -28,46 +32,17 @@ index, repairs small data outages, removes duplicates, and flags
 flash-crash artefacts only when they look like data-feed anomalies
 rather than genuine market moves.
 
-\begingroup
-\footnotesize
-\setlength{\tabcolsep}{2pt}
-\begin{longtable}[]{@{}lllllll@{}}
-\toprule
-\begin{minipage}[b]{0.12\columnwidth}\raggedright
-Original rows\strut
-\end{minipage} & \begin{minipage}[b]{0.12\columnwidth}\raggedright
-Clean rows\strut
-\end{minipage} & \begin{minipage}[b]{0.12\columnwidth}\raggedright
-Missing hours\strut
-\end{minipage} & \begin{minipage}[b]{0.12\columnwidth}\raggedright
-Duplicates removed\strut
-\end{minipage} & \begin{minipage}[b]{0.12\columnwidth}\raggedright
-Flash-crash repairs\strut
-\end{minipage} & \begin{minipage}[b]{0.12\columnwidth}\raggedright
-Start\strut
-\end{minipage} & \begin{minipage}[b]{0.12\columnwidth}\raggedright
-End\strut
-\end{minipage}\tabularnewline
-\midrule
-\endhead
-\begin{minipage}[t]{0.12\columnwidth}\raggedright
-46265.0000\strut
-\end{minipage} & \begin{minipage}[t]{0.12\columnwidth}\raggedright
-46279.0000\strut
-\end{minipage} & \begin{minipage}[t]{0.12\columnwidth}\raggedright
-14.0000\strut
-\end{minipage} & \begin{minipage}[t]{0.12\columnwidth}\raggedright
-0.0000\strut
-\end{minipage} & \begin{minipage}[t]{0.12\columnwidth}\raggedright
-0.0000\strut
-\end{minipage} & \begin{minipage}[t]{0.12\columnwidth}\raggedright
-2021-01-01 00:00 UTC\strut
-\end{minipage} & \begin{minipage}[t]{0.12\columnwidth}\raggedright
-2026-04-13 06:00 UTC\strut
-\end{minipage}\tabularnewline
-\bottomrule
-\end{longtable}
-\endgroup
+That choice is operationally convenient but not theoretically neutral.
+BTC/USDT embeds not only Bitcoin market risk but also residual Tether
+credit and peg risk. During stress episodes such as the May 2022 stablecoin
+dislocation, temporary USDT/USD deviations can contaminate the measured
+return distribution and therefore bias both volatility and tail-loss
+estimates. A production-grade extension should therefore either migrate
+to true fiat pairs such as Coinbase or Kraken BTC/USD, or explicitly
+deflate the BTC/USDT series by a synchronized USDT/USD basis series
+before computing returns.
+
+\input{tables/data_quality.tex}
 
 \begin{figure}
 \centering
@@ -99,8 +74,8 @@ which is the exact combination that motivates Student-t VaR, Monte Carlo
 simulation with jumps, and neural network volatility forecasting.
 
 Four model families are implemented. Method A is a parametric Student-t
-VaR, calibrated on the latest ninety days of hourly returns, to capture
-excess kurtosis in a compact distributional form. Method B is a
+VaR, calibrated on a rolling return window selected by validation, to
+capture excess kurtosis in a compact distributional form. Method B is a
 10,000-path jump-diffusion Monte Carlo engine that retains Gaussian
 diffusion but adds empirically calibrated jump intensity and jump
 magnitude to reflect crypto discontinuities. Method C is a PyTorch LSTM
@@ -110,6 +85,50 @@ distribution into VaR and CVaR. Method D is a PyTorch variational
 autoencoder trained on rolling 24-hour return windows; it learns a
 latent representation of return dynamics and generates synthetic paths
 by sampling from latent space.
+
+The final model settings are selected on the pre-backtest training
+history only, so the comparison remains out of sample. Student-t and
+jump diffusion are tuned on rolling calibration windows, the LSTM uses
+the best look-back window from the validation sweep, and the VAE uses
+the best latent size before any backtest or stress episode is evaluated.
+
+\begingroup
+\small
+\setlength{\tabcolsep}{4pt}
+\begin{center}
+\begin{tabularx}{0.98\linewidth}{@{}>{\RaggedRight\arraybackslash}p{0.10\linewidth}>{\RaggedRight\arraybackslash}p{0.18\linewidth}>{\RaggedRight\arraybackslash}X>{\RaggedRight\arraybackslash}X@{}}
+\toprule
+Method & Model & Primary role & Main trade-off \\
+\midrule
+A & Student-t VaR & Parametric heavy-tail VaR using a recent rolling return window. & Transparent and fast, but only weakly conditional on market state. \\
+B & Jump-diffusion Monte Carlo & Scenario engine that combines diffusion risk with discontinuous crypto-style jumps. & More realistic under stress, but sensitive to jump calibration choices. \\
+C & LSTM Gaussian head & Feature-conditioned forecast of next-hour mean and volatility from engineered signals. & Most adaptive model in the stack, but harder to explain and validate. \\
+D & VAE latent sampling & Generative model that learns return-window structure and produces synthetic tail scenarios. & Useful for scenario enrichment, but less direct for one-step production VaR. \\
+\bottomrule
+\end{tabularx}
+\end{center}
+\endgroup
+
+\subsubsection*{Tuned Model Settings}
+
+\input{tables/model_tuning_summary.tex}
+
+The neural models are evaluated with a chronological rather than random
+split, which is appropriate for financial time series. The last year of
+the sample is reserved for backtesting, while the earlier history is used
+for model fitting and the final 20\% of the pre-backtest training window
+is held out for validation. This reduces look-ahead bias, but it is not
+equivalent to a full rolling-origin cross-validation design across
+multiple market regimes. Accordingly, strong LSTM performance in the
+current backtest should be interpreted as encouraging rather than final.
+
+The jump-diffusion engine also requires a qualification. Its jump
+intensity and jump-size parameters are re-estimated from recent rolling
+history, which makes the model more adaptive than a single full-sample
+fit, but the parameters are still treated as piecewise static within each
+calibration window. In a market whose microstructure has changed from
+retail-led 2021 momentum to ETF- and institution-influenced 2024--2026
+flows, that stationarity assumption can become materially inaccurate.
 
 The downside tail metrics used in the report follow the standard
 left-tail definitions:
@@ -131,35 +150,9 @@ violations, and \(\hat{p}\) is the observed violation rate.
 \hypertarget{statistical-diagnostics}{%
 \subsection{Statistical Diagnostics}\label{statistical-diagnostics}}
 
-\begingroup
-\footnotesize
-\setlength{\tabcolsep}{3pt}
-\begin{longtable}[]{@{}llllllll@{}}
-\toprule
-Obs. & Mean & Std. & Skew & Kurtosis & JB stat & JB p-val & ADF stat
-\tabularnewline
-\midrule
-\endhead
-46278.0000 & 0.0000 & 0.0064 & -0.2066 & 18.9551 & 491079.1521 & 0.0000 & -30.2084
-\tabularnewline
-\bottomrule
-\end{longtable}
-\endgroup
+\input{tables/descriptive_statistics_main.tex}
 
-\begingroup
-\footnotesize
-\setlength{\tabcolsep}{3pt}
-\begin{longtable}[]{@{}llllllll@{}}
-\toprule
-ADF p-val & ADF 1\% crit & ADF 5\% crit & ADF 10\% crit & Min & Max & P1 & P99
-\tabularnewline
-\midrule
-\endhead
-0.0000 & -3.4305 & -2.8616 & -2.5668 & -0.0938 & 0.1161 & -0.0193 & 0.0186
-\tabularnewline
-\bottomrule
-\end{longtable}
-\endgroup
+\input{tables/descriptive_statistics_tail.tex}
 
 \begin{figure}
 \centering
@@ -198,6 +191,17 @@ again: it does not forecast a point volatility path but instead learns a
 latent manifold of plausible return windows and samples from that
 manifold to infer risk.
 
+That ranking should not be over-interpreted as a definitive horse race.
+The LSTM's favorable Kupiec result does not prove that it has learned a
+stable economic law; it may also reflect regime-specific fit to the held
+out year. Moreover, its practical use inside a risk committee is limited
+by interpretability: a conditional neural alert is operationally less
+useful if model owners cannot clearly attribute the warning to a shift in
+realized volatility, trend, volume pressure, or jump risk. For that
+reason, the neural forecasts in this report are best viewed as an overlay
+on top of transparent benchmark models rather than a wholesale
+replacement for them.
+
 Backtesting over the last year uses the Kupiec proportion-of-failures
 framework. A model with reliable tail calibration should produce
 violation rates close to the nominal tail probability and should not be
@@ -211,25 +215,15 @@ fully conditional production VaR engine, so its unconditional violation
 rate is informative about latent-distribution realism rather than full
 real-time adaptability.
 
-\begingroup
-\scriptsize
-\setlength{\tabcolsep}{2pt}
-\begin{longtable}[]{@{}>{\RaggedRight\arraybackslash}p{0.18\linewidth}*{7}{>{\RaggedLeft\arraybackslash}p{0.09\linewidth}}@{}}
-\toprule
-Model & Horizon (h) & VaR ret. & CVaR ret. & VaR loss & CVaR loss & Mean ret. & Vol.
-\tabularnewline
-\midrule
-\endhead
-Jump-diffusion MC & 1.0000 & -0.0148 & -0.0272 & 0.0148 & 0.0272 & -0.0002 & 0.0065\tabularnewline
-LSTM & 1.0000 & -0.0108 & -0.0125 & 0.0108 & 0.0125 & 0.0009 & 0.0050\tabularnewline
-Student-t param. & 1.0000 & -0.0147 & -0.0192 & 0.0147 & 0.0192 & -0.0001 & 0.0056\tabularnewline
-VAE & 1.0000 & -0.0115 & -0.0139 & 0.0115 & 0.0139 & -0.0002 & 0.0041\tabularnewline
-Jump-diffusion MC & 24.0000 & -0.0827 & -0.0971 & 0.0827 & 0.0971 & -0.0049 & 0.0317\tabularnewline
-Student-t param. & 24.0000 & -0.0675 & -0.0792 & 0.0675 & 0.0792 & -0.0029 & 0.0272\tabularnewline
-VAE & 24.0000 & -0.0321 & -0.0371 & 0.0321 & 0.0371 & 0.0004 & 0.0130\tabularnewline
-\bottomrule
-\end{longtable}
-\endgroup
+The jump-diffusion results also depend critically on calibration vintage.
+If jump intensity is estimated from a window dominated by one regime, the
+model can be either too complacent or too conservative when the market
+structure changes. That caveat is particularly important after the
+introduction of spot ETF flows, because gap behavior driven by regulated
+fund flows and macro hedging demand is unlikely to be identical to the
+liquidation cascades that characterized earlier crypto-only regimes.
+
+\input{tables/current_var_estimates.tex}
 
 \begin{figure}
 \centering
@@ -255,163 +249,19 @@ responsiveness and stability in volatility prediction.
 \subsubsection{Confidence-Level
 Comparison}\label{confidence-level-comparison}}
 
-\begingroup
-\footnotesize
-\setlength{\tabcolsep}{3pt}
-\begin{longtable}[]{@{}>{\RaggedLeft\arraybackslash}p{0.11\linewidth}>{\RaggedRight\arraybackslash}p{0.24\linewidth}*{3}{>{\RaggedLeft\arraybackslash}p{0.12\linewidth}}@{}}
-\toprule
-Conf. (\%) & Model & VaR loss & CVaR loss & Vol.\tabularnewline
-\midrule
-\endhead
-95.0000 & Jump-diffusion MC & 0.0098 & 0.0139 &
-0.0063\tabularnewline
-95.0000 & Student-t param. & 0.0089 & 0.0126 & 0.0056\tabularnewline
-95.0000 & LSTM & 0.0074 & 0.0095 & 0.0050\tabularnewline
-95.0000 & VAE & 0.0070 & 0.0097 & 0.0041\tabularnewline
-97.5000 & Jump-diffusion MC & 0.0118 & 0.0171 &
-0.0063\tabularnewline
-97.5000 & Student-t param. & 0.0112 & 0.0153 & 0.0056\tabularnewline
-97.5000 & LSTM & 0.0089 & 0.0108 & 0.0050\tabularnewline
-97.5000 & VAE & 0.0089 & 0.0115 & 0.0041\tabularnewline
-99.0000 & Jump-diffusion MC & 0.0156 & 0.0257 &
-0.0064\tabularnewline
-99.0000 & Student-t param. & 0.0148 & 0.0196 & 0.0056\tabularnewline
-99.0000 & VAE & 0.0115 & 0.0139 & 0.0041\tabularnewline
-99.0000 & LSTM & 0.0108 & 0.0125 & 0.0050\tabularnewline
-\bottomrule
-\end{longtable}
-\endgroup
+\input{tables/confidence_sensitivity.tex}
 
 \hypertarget{student-t-degrees-of-freedom-impact}{%
 \subsubsection{Student-t Degrees-of-Freedom
 Impact}\label{student-t-degrees-of-freedom-impact}}
 
-\begingroup
-\footnotesize
-\setlength{\tabcolsep}{2pt}
-\begin{longtable}[]{@{}lllll@{}}
-\toprule
-DoF & VaR ret. & VaR loss & Tail ratio / sigma & Estimated fit\tabularnewline
-\midrule
-\endhead
-\begin{minipage}[t]{0.17\columnwidth}\raggedright
-4.5000\strut
-\end{minipage} & \begin{minipage}[t]{0.17\columnwidth}\raggedright
--0.0148\strut
-\end{minipage} & \begin{minipage}[t]{0.17\columnwidth}\raggedright
-0.0148\strut
-\end{minipage} & \begin{minipage}[t]{0.17\columnwidth}\raggedright
-2.6506\strut
-\end{minipage} & \begin{minipage}[t]{0.17\columnwidth}\raggedright
-0.0000\strut
-\end{minipage}\tabularnewline
-\begin{minipage}[t]{0.17\columnwidth}\raggedright
-5.0000\strut
-\end{minipage} & \begin{minipage}[t]{0.17\columnwidth}\raggedright
--0.0147\strut
-\end{minipage} & \begin{minipage}[t]{0.17\columnwidth}\raggedright
-0.0147\strut
-\end{minipage} & \begin{minipage}[t]{0.17\columnwidth}\raggedright
-2.6281\strut
-\end{minipage} & \begin{minipage}[t]{0.17\columnwidth}\raggedright
-0.0000\strut
-\end{minipage}\tabularnewline
-\begin{minipage}[t]{0.17\columnwidth}\raggedright
-6.0000\strut
-\end{minipage} & \begin{minipage}[t]{0.17\columnwidth}\raggedright
--0.0144\strut
-\end{minipage} & \begin{minipage}[t]{0.17\columnwidth}\raggedright
-0.0144\strut
-\end{minipage} & \begin{minipage}[t]{0.17\columnwidth}\raggedright
-2.5876\strut
-\end{minipage} & \begin{minipage}[t]{0.17\columnwidth}\raggedright
-0.0000\strut
-\end{minipage}\tabularnewline
-\begin{minipage}[t]{0.17\columnwidth}\raggedright
-8.0000\strut
-\end{minipage} & \begin{minipage}[t]{0.17\columnwidth}\raggedright
--0.0141\strut
-\end{minipage} & \begin{minipage}[t]{0.17\columnwidth}\raggedright
-0.0141\strut
-\end{minipage} & \begin{minipage}[t]{0.17\columnwidth}\raggedright
-2.5301\strut
-\end{minipage} & \begin{minipage}[t]{0.17\columnwidth}\raggedright
-0.0000\strut
-\end{minipage}\tabularnewline
-\begin{minipage}[t]{0.17\columnwidth}\raggedright
-12.0000\strut
-\end{minipage} & \begin{minipage}[t]{0.17\columnwidth}\raggedright
--0.0138\strut
-\end{minipage} & \begin{minipage}[t]{0.17\columnwidth}\raggedright
-0.0138\strut
-\end{minipage} & \begin{minipage}[t]{0.17\columnwidth}\raggedright
-2.4691\strut
-\end{minipage} & \begin{minipage}[t]{0.17\columnwidth}\raggedright
-0.0000\strut
-\end{minipage}\tabularnewline
-\begin{minipage}[t]{0.17\columnwidth}\raggedright
-20.0000\strut
-\end{minipage} & \begin{minipage}[t]{0.17\columnwidth}\raggedright
--0.0135\strut
-\end{minipage} & \begin{minipage}[t]{0.17\columnwidth}\raggedright
-0.0135\strut
-\end{minipage} & \begin{minipage}[t]{0.17\columnwidth}\raggedright
-2.4199\strut
-\end{minipage} & \begin{minipage}[t]{0.17\columnwidth}\raggedright
-0.0000\strut
-\end{minipage}\tabularnewline
-\bottomrule
-\end{longtable}
-\endgroup
+\input{tables/student_t_df_sensitivity.tex}
 
 \hypertarget{lstm-look-back-window-impact}{%
 \subsubsection{LSTM Look-back Window
 Impact}\label{lstm-look-back-window-impact}}
 
-\begingroup
-\footnotesize
-\setlength{\tabcolsep}{2pt}
-\begin{longtable}[]{@{}lllll@{}}
-\toprule
-Look-back (h) & Best val. loss & Sigma MAE & Current VaR loss & Current sigma\tabularnewline
-\midrule
-\endhead
-\begin{minipage}[t]{0.17\columnwidth}\raggedright
-24.0000\strut
-\end{minipage} & \begin{minipage}[t]{0.17\columnwidth}\raggedright
--4.7104\strut
-\end{minipage} & \begin{minipage}[t]{0.17\columnwidth}\raggedright
-0.0033\strut
-\end{minipage} & \begin{minipage}[t]{0.17\columnwidth}\raggedright
-0.0091\strut
-\end{minipage} & \begin{minipage}[t]{0.17\columnwidth}\raggedright
-0.0046\strut
-\end{minipage}\tabularnewline
-\begin{minipage}[t]{0.17\columnwidth}\raggedright
-48.0000\strut
-\end{minipage} & \begin{minipage}[t]{0.17\columnwidth}\raggedright
--4.7427\strut
-\end{minipage} & \begin{minipage}[t]{0.17\columnwidth}\raggedright
-0.0036\strut
-\end{minipage} & \begin{minipage}[t]{0.17\columnwidth}\raggedright
-0.0108\strut
-\end{minipage} & \begin{minipage}[t]{0.17\columnwidth}\raggedright
-0.0050\strut
-\end{minipage}\tabularnewline
-\begin{minipage}[t]{0.17\columnwidth}\raggedright
-72.0000\strut
-\end{minipage} & \begin{minipage}[t]{0.17\columnwidth}\raggedright
--4.6586\strut
-\end{minipage} & \begin{minipage}[t]{0.17\columnwidth}\raggedright
-0.0046\strut
-\end{minipage} & \begin{minipage}[t]{0.17\columnwidth}\raggedright
-0.0164\strut
-\end{minipage} & \begin{minipage}[t]{0.17\columnwidth}\raggedright
-0.0067\strut
-\end{minipage}\tabularnewline
-\bottomrule
-\end{longtable}
-\endgroup
+\input{tables/lstm_window_sensitivity.tex}
 
 \hypertarget{stress-testing}{%
 \subsection{Stress Testing}\label{stress-testing}}
@@ -426,33 +276,9 @@ model again produced the stronger pre-event warning profile than the
 plain Student-t specification, which is consistent with Bitcoin's
 tendency to gap around event-driven order-flow shocks.
 
-\begingroup
-\scriptsize
-\setlength{\tabcolsep}{3pt}
-\begin{longtable}[]{@{}lllllll@{}}
-\toprule
-Event & Event time & Realized return & Realized loss & t-VaR loss & MC VaR loss & Closest model\tabularnewline
-\midrule
-\endhead
-FTX Collapse & 2022-11-08 17:00 UTC & -0.0518 & 0.0518 & 0.0146 & 0.0152 & Jump-diffusion MC\tabularnewline
-ETF whipsaw & 2024-01-11 15:00 UTC & -0.0375 & 0.0375 & 0.0123 & 0.0123 & Jump-diffusion MC\tabularnewline
-\bottomrule
-\end{longtable}
-\endgroup
+\input{tables/stress_test_overview.tex}
 
-\begingroup
-\scriptsize
-\setlength{\tabcolsep}{3pt}
-\begin{longtable}[]{@{}llllll@{}}
-\toprule
-Event & t peak warning & MC peak warning & t peak lead (h) & MC peak lead (h) & Strongest warning\tabularnewline
-\midrule
-\endhead
-FTX Collapse & 0.0145 & 0.0161 & 8.0000 & 22.0000 & Jump-diffusion MC\tabularnewline
-ETF whipsaw & 0.0124 & 0.0124 & 11.0000 & 3.0000 & Jump-diffusion MC\tabularnewline
-\bottomrule
-\end{longtable}
-\endgroup
+\input{tables/stress_test_warnings.tex}
 
 \begin{figure}
 \centering
@@ -472,45 +298,11 @@ dependent, variance scales more cleanly than tail risk. In other words,
 volatility clustering rather than mean predictability is the main reason
 a naive Basel-style scaling rule can misstate long-horizon Bitcoin risk.
 
-\begingroup
-\footnotesize
-\setlength{\tabcolsep}{3pt}
-\begin{longtable}[]{@{}llll@{}}
-\toprule
-horizon & sqrt\_time\_scaled\_VaR & empirical\_VaR &
-scaling\_bias\_pct\tabularnewline
-\midrule
-\endhead
-1 day & 0.0943 & 0.0874 & 7.9691\tabularnewline
-10 days & 0.2983 & 0.2766 & 7.8213\tabularnewline
-\bottomrule
-\end{longtable}
-\endgroup
+\input{tables/time_scale_scaling.tex}
 
-\begingroup
-\footnotesize
-\setlength{\tabcolsep}{2pt}
-\begin{longtable}[]{@{}llllll@{}}
-\toprule
-r(1) & r(24) & |r|(1) & |r|(24) & LB p-value r(24) & LB p-value |r|(24)\tabularnewline
-\midrule
-\endhead
-\begin{minipage}[t]{0.14\columnwidth}\raggedright
--0.0047\strut
-\end{minipage} & \begin{minipage}[t]{0.14\columnwidth}\raggedright
--0.0262\strut
-\end{minipage} & \begin{minipage}[t]{0.14\columnwidth}\raggedright
-0.2847\strut
-\end{minipage} & \begin{minipage}[t]{0.14\columnwidth}\raggedright
-0.1904\strut
-\end{minipage} & \begin{minipage}[t]{0.14\columnwidth}\raggedright
-0.0000\strut
-\end{minipage} & \begin{minipage}[t]{0.14\columnwidth}\raggedright
-0.0000\strut
-\end{minipage}\tabularnewline
-\bottomrule
-\end{longtable}
-\endgroup
+\input{tables/autocorrelation_summary.tex}
+
+\clearpage
 
 \hypertarget{practical-implications}{%
 \subsection{Practical Implications}\label{practical-implications}}
@@ -525,28 +317,16 @@ estimates, while short-horizon desks and intraday traders should monitor
 the LSTM conditional volatility forecasts as an adaptive overlay rather
 than as a replacement for scenario analysis.
 
-\begingroup
-\footnotesize
-\setlength{\tabcolsep}{3pt}
-\begin{longtable}[]{@{}>{\RaggedLeft\arraybackslash}p{0.16\linewidth}>{\RaggedRight\arraybackslash}p{0.22\linewidth}*{3}{>{\RaggedLeft\arraybackslash}p{0.13\linewidth}}@{}}
-\toprule
-Notional USD & Model & Horizon (h) & VaR capital & CVaR capital\tabularnewline
-\midrule
-\endhead
-1000000.00 & Jump-diffusion MC & 1.00 & 14813.33 &
-27165.58\tabularnewline
-1000000.00 & Student-t param. & 1.00 & 14663.19 &
-19229.70\tabularnewline
-1000000.00 & VAE & 1.00 & 11529.11 & 13873.35\tabularnewline
-1000000.00 & LSTM & 1.00 & 10786.25 & 12487.07\tabularnewline
-1000000.00 & Jump-diffusion MC & 24.00 & 82652.17 &
-97101.38\tabularnewline
-1000000.00 & Student-t param. & 24.00 & 67490.19 &
-79151.30\tabularnewline
-1000000.00 & VAE & 24.00 & 32055.27 & 37144.40\tabularnewline
-\bottomrule
-\end{longtable}
-\endgroup
+Even so, the capital numbers in the table remain frictionless market-risk
+figures. They assume the position can be liquidated at or near quoted
+prices. During episodes such as the FTX collapse, the binding constraint
+is often not statistical tail size but vanishing order-book depth,
+widening spreads, and nonlinear slippage. A more operational next step
+would be liquidity-adjusted VaR (L-VaR), in which the statistical loss is
+augmented by an execution-cost term derived from order-book depth,
+participation-rate assumptions, and stress-dependent spread expansion.
+
+\input{tables/capital_requirements.tex}
 
 \hypertarget{backtesting}{%
 \subsection{Backtesting}\label{backtesting}}
@@ -556,21 +336,7 @@ model-implied one-hour VaR thresholds. Kupiec's proportion-of-failures
 test is used to evaluate whether each model's exception rate is
 statistically consistent with the target left-tail probability of 1\%.
 
-\begingroup
-\footnotesize
-\setlength{\tabcolsep}{2pt}
-\begin{longtable}[]{@{}>{\RaggedRight\arraybackslash}p{0.19\linewidth}*{6}{>{\RaggedLeft\arraybackslash}p{0.10\linewidth}}@{}}
-\toprule
-Model & Obs. & Viol. & Exp. fail rate & Obs. fail rate & LR\_POF & p-value\tabularnewline
-\midrule
-\endhead
-Student-t VaR & 8761.0000 & 129.0000 & 0.0100 & 0.0147 & 17.2425 & 0.0000\tabularnewline
-Jump-diffusion MC & 8761.0000 & 128.0000 & 0.0100 & 0.0146 & 16.4670 & 0.0000\tabularnewline
-LSTM cond. VaR & 8761.0000 & 81.0000 & 0.0100 & 0.0092 & 0.5168 & 0.4722\tabularnewline
-VAE latent VaR & 8761.0000 & 138.0000 & 0.0100 & 0.0158 & 24.9163 & 0.0000\tabularnewline
-\bottomrule
-\end{longtable}
-\endgroup
+\input{tables/kupiec_backtest_summary.tex}
 
 \begin{figure}
 \centering
@@ -594,19 +360,30 @@ VAE latent VaR & 8761.0000 & 138.0000 & 0.0100 & 0.0158 & 24.9163 & 0.0000\tabul
 \subsection{Limitations \& Assumptions}\label{limitations-assumptions}}
 
 The report rests on several assumptions that should be made explicit.
-First, all results depend on exchange-sourced hourly candles, so
-maintenance windows, low-liquidity intervals, or transient feed errors
-can still influence tail estimates even after cleaning. Second, the
-neural-network components are materially less interpretable than the
-parametric Student-t model: they improve adaptability, but the latent
-and recurrent structures make causal attribution harder during model
-validation. Third, accelerated compute helps with experimentation, yet
-extreme crypto regimes can change faster than any retraining schedule if
-governance requires full validation before redeployment. Finally, the
-VAE is used here as a latent-distribution benchmark rather than a full
-production calibration engine, so its value is strongest in scenario
-generation and comparative tail diagnostics rather than standalone
-regulatory capital determination.
+First, the benchmark dataset is BTC/USDT rather than true BTC/USD, so
+the measured return distribution inherits stablecoin proxy risk. This is
+acceptable for exploratory analysis but weaker than a fiat benchmark for
+academic identification or formal capital policy. Second, all results
+depend on exchange-sourced hourly candles, so maintenance windows,
+low-liquidity intervals, or transient feed errors can still influence
+tail estimates even after cleaning. Third, the LSTM and VAE are trained
+with chronological validation and an out-of-sample backtest year, but
+they are not yet subjected to a full rolling cross-validation protocol
+across multiple non-overlapping market regimes; therefore overfitting
+cannot be ruled out. Fourth, the neural-network components are materially
+less interpretable than the parametric Student-t model: they improve
+adaptability, but the latent and recurrent structures make causal
+attribution harder during model validation and model-governance review.
+Fifth, the jump-diffusion engine is only as good as its calibration
+window; jump intensity and jump size are allowed to refresh, but they
+remain locally static within each estimation block. Sixth, the reported
+VaR and CVaR numbers are market-risk statistics, not liquidity-adjusted
+liquidation losses. In a genuine crisis, order-book depletion and
+slippage can dominate the quoted-price move. Finally, the VAE is used
+here as a latent-distribution benchmark rather than a full production
+calibration engine, so its value is strongest in scenario generation and
+comparative tail diagnostics rather than standalone regulatory capital
+determination.
 
 \hypertarget{discussion}{%
 \subsection{Discussion}\label{discussion}}
@@ -622,6 +399,13 @@ the tail issue, but from different angles: one via an explicit
 parametric distribution and the other via a latent generative
 representation.
 
+The data benchmark itself introduces an important layer of interpretation.
+Because the analysis relies on BTC/USDT rather than BTC/USD, some of the
+estimated stress may reflect proxy contamination from stablecoin basis
+rather than pure Bitcoin risk. That does not invalidate the exercise,
+but it does mean the results should be read as a practical exchange-risk
+measure rather than a perfectly clean fiat-denominated asset process.
+
 The model trade-offs are practical. Student-t VaR is transparent, cheap,
 and easy to explain to risk committees, but it cannot react quickly to
 changing microstructure conditions unless it is recalibrated frequently.
@@ -636,6 +420,15 @@ data-driven synthetic distribution that can surface tail scenarios not
 captured by a single closed-form family, although in its basic
 unconditional form it is less naturally aligned with rolling one-step
 backtesting.
+
+From a governance perspective, the ranking is therefore conditional on
+use case. If the objective is transparent committee reporting, the
+Student-t and jump-diffusion models remain more defensible than a pure
+black-box trigger. If the objective is short-horizon surveillance, the
+LSTM is valuable precisely because it is sensitive to state changes, but
+it should be paired with feature-level diagnostics and human review.
+And if the objective is crisis liquidation planning, none of the present
+models is sufficient without an explicit liquidity layer.
 
 From a governance perspective, the backtest evidence favors LSTM
 conditional VaR because it produced the highest Kupiec p-value (0.472)
@@ -658,7 +451,12 @@ jump-diffusion Monte Carlo engine for scenario realism, while the LSTM
 is the best candidate for a responsive conditional overlay. The VAE is a
 useful research extension for latent-distribution learning and stress
 scenario generation. Together, the four methods provide a defensible and
-extensible market-risk toolkit for a high-volatility digital asset.
+extensible market-risk toolkit for a high-volatility digital asset. The
+main qualification is that this toolkit is not yet complete: proxy risk,
+model interpretability, calibration drift, and liquidity-adjusted exit
+costs all remain material open items. Addressing those four issues would
+move the analysis from a strong quantitative prototype toward a more
+publishable and institutionally robust risk report.
 
 \hypertarget{appendix}{%
 \subsection{Appendix}\label{appendix}}

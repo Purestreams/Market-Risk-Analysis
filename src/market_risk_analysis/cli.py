@@ -19,5 +19,6 @@ def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
     summary = run_analysis(refresh_data=args.refresh_data)
-    print(f"Report written to {summary['report_path']}")
+    print(f"Tables written to {summary['tables_dir']}")
+    print(f"Figures written to {summary['figures_dir']}")
     print(f"Results written to {summary['results_path']}")

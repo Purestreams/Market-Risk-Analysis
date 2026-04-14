@@ -1,0 +1,16 @@
+\begingroup
+\scriptsize
+\setlength{\tabcolsep}{2pt}
+\begin{center}
+\begin{tabular}{@{}>{\RaggedRight\arraybackslash}p{0.15\linewidth}>{\RaggedRight\arraybackslash}p{0.24\linewidth}>{\RaggedRight\arraybackslash}p{0.31\linewidth}>{\RaggedRight\arraybackslash}p{0.16\linewidth}>{\RaggedLeft\arraybackslash}p{0.10\linewidth}@{}}
+\toprule
+Model & Design & Best parameters & Selection metric & Validation score \\
+\midrule
+Student-t VaR & Parametric heavy-tail baseline & 90-day rolling window; df estimated from sample kurtosis & Mean pinball loss & 0.0003 \\
+Jump-diffusion Monte Carlo & Diffusion plus calibrated jump scenario engine & 90-day rolling window; jump threshold 2.5 sigma & Mean pinball loss & 0.0003 \\
+LSTM cond. VaR & Feature-conditioned recurrent forecaster with Gaussian head & 48-hour look-back; 2 layers; 48 hidden units; dropout 0.10 & Best validation NLL & -4.7427 \\
+VAE latent VaR & Latent generative return model on rolling windows & 24-hour window; latent dimension 8 & Best validation ELBO & 0.5178 \\
+\bottomrule
+\end{tabular}
+\end{center}
+\endgroup

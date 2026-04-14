@@ -1,0 +1,32 @@
+\begingroup
+\footnotesize
+\setlength{\tabcolsep}{3pt}
+\begin{longtable}{@{}>{\RaggedLeft\arraybackslash}p{0.11\linewidth}>{\RaggedRight\arraybackslash}p{0.24\linewidth}*{3}{>{\RaggedLeft\arraybackslash}p{0.12\linewidth}}@{}}
+\toprule
+Conf. (\%) & Model & VaR loss & CVaR loss & Vol. \\
+\midrule
+\endfirsthead
+\toprule
+Conf. (\%) & Model & VaR loss & CVaR loss & Vol. \\
+\midrule
+\endhead
+\midrule
+\multicolumn{5}{r}{Continued on next page} \\
+\midrule
+\endfoot
+\bottomrule
+\endlastfoot
+95 & Jump-diffusion MC & 0.0097 & 0.0143 & 0.0067 \\
+95 & Student-t param. & 0.0088 & 0.0126 & 0.0043 \\
+95 & LSTM & 0.0074 & 0.0095 & 0.005 \\
+95 & VAE & 0.0061 & 0.0082 & 0.0036 \\
+97.5 & Jump-diffusion MC & 0.0119 & 0.0179 & 0.0065 \\
+97.5 & Student-t param. & 0.0112 & 0.0153 & 0.0043 \\
+97.5 & LSTM & 0.0089 & 0.0108 & 0.005 \\
+97.5 & VAE & 0.0075 & 0.0096 & 0.0036 \\
+99 & Jump-diffusion MC & 0.016 & 0.0284 & 0.0067 \\
+99 & Student-t param. & 0.0147 & 0.0194 & 0.0043 \\
+99 & LSTM & 0.0108 & 0.0125 & 0.005 \\
+99 & VAE & 0.0096 & 0.0115 & 0.0036 \\
+\end{longtable}
+\endgroup

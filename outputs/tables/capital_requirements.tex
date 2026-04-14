@@ -1,0 +1,27 @@
+\begingroup
+\footnotesize
+\setlength{\tabcolsep}{3pt}
+\begin{longtable}{@{}>{\RaggedLeft\arraybackslash}p{0.16\linewidth}>{\RaggedRight\arraybackslash}p{0.22\linewidth}*{3}{>{\RaggedLeft\arraybackslash}p{0.13\linewidth}}@{}}
+\toprule
+Notional USD & Model & Horizon (h) & VaR capital & CVaR capital \\
+\midrule
+\endfirsthead
+\toprule
+Notional USD & Model & Horizon (h) & VaR capital & CVaR capital \\
+\midrule
+\endhead
+\midrule
+\multicolumn{5}{r}{Continued on next page} \\
+\midrule
+\endfoot
+\bottomrule
+\endlastfoot
+1000000 & Jump-diffusion MC & 1 & 16276.37 & 28112.64 \\
+1000000 & Student-t param. & 1 & 14655.86 & 19350.76 \\
+1000000 & LSTM & 1 & 10786.25 & 12487.07 \\
+1000000 & VAE & 1 & 9625.22 & 11537.65 \\
+1000000 & Jump-diffusion MC & 24 & 82946.43 & 96006.01 \\
+1000000 & Student-t param. & 24 & 67183.15 & 77946.75 \\
+1000000 & VAE & 24 & 32442.68 & 39496.35 \\
+\end{longtable}
+\endgroup

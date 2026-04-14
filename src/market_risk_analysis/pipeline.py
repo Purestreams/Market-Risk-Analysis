@@ -26,6 +26,17 @@ from torch.utils.data import DataLoader, TensorDataset
 from .config import (
     BACKTEST_DAYS,
     BACKTEST_WINDOW_HOURS,
+    JUMP_DIFFUSION_THRESHOLD_CANDIDATES,
+    JUMP_DIFFUSION_WINDOW_CANDIDATES,
+    LSTM_BATCH_SIZE,
+    LSTM_DROPOUT,
+    LSTM_FINAL_EPOCHS,
+    LSTM_HIDDEN_DIM,
+    LSTM_LEARNING_RATE,
+    LSTM_LOOKBACK_CANDIDATES,
+    LSTM_NUM_LAYERS,
+    LSTM_SEQUENCE_LENGTH,
+    LSTM_TUNING_EPOCHS,
     DEFAULT_CONFIDENCE,
     DEFAULT_START_TIMESTAMP,
     HORIZON_HOURS,
@@ -34,6 +45,15 @@ from .config import (
     ProjectPaths,
     RANDOM_SEED,
     RECENT_WINDOW_HOURS,
+    STUDENT_T_WINDOW_CANDIDATES,
+    TUNING_EVAL_STRIDE_HOURS,
+    TUNING_MONTE_CARLO_PATHS,
+    TUNING_VALIDATION_DAYS,
+    VAE_BATCH_SIZE,
+    VAE_FINAL_EPOCHS,
+    VAE_LATENT_DIM_CANDIDATES,
+    VAE_LEARNING_RATE,
+    VAE_TUNING_EPOCHS,
     VAE_WINDOW,
 )
 from .npu import maybe_compile_for_npu, select_training_device
@@ -280,6 +300,43 @@ def normal_forecast_from_params(
     )
 
 
+def quantile_loss(actual_returns: np.ndarray, forecast_returns: np.ndarray, confidence: float) -> float:
+    alpha = 1 - confidence
+    differences = actual_returns - forecast_returns
+    losses = np.where(actual_returns < forecast_returns, (alpha - 1) * differences, alpha * differences)
+    return float(np.mean(losses))
+
+
+def student_t_forecast_from_sample(
+    sample: np.ndarray,
+    confidence: float,
+    horizon_hours: int = 1,
+    metadata: dict[str, Any] | None = None,
+) -> ForecastSummary:
+    degrees_of_freedom, loc, scale = estimate_student_t_parameters(sample)
+    alpha = 1 - confidence
+    quantile = stats.t.ppf(alpha, degrees_of_freedom)
+    density = stats.t.pdf(quantile, degrees_of_freedom)
+    var_return = loc + scale * quantile
+    cvar_return = loc - scale * (density / alpha) * ((degrees_of_freedom + quantile**2) / (degrees_of_freedom - 1))
+    return ForecastSummary(
+        horizon_hours=horizon_hours,
+        var_return=float(var_return),
+        cvar_return=float(cvar_return),
+        var_loss=float(-var_return),
+        cvar_loss=float(-cvar_return),
+        mean_return=float(loc),
+        volatility=float(scale),
+        metadata=metadata
+        or {
+            "distribution": "Student-t",
+            "degrees_of_freedom": float(degrees_of_freedom),
+            "location": float(loc),
+            "scale": float(scale),
+        },
+    )
+
+
 def estimate_student_t_parameters(sample: np.ndarray) -> tuple[float, float, float]:
     mean = float(sample.mean())
     std = float(sample.std(ddof=1))
@@ -299,18 +356,13 @@ def fit_student_t_var(
     rng: np.random.Generator,
 ) -> dict[int, ForecastSummary]:
     sample = returns.dropna().to_numpy()
-    degrees_of_freedom, loc, scale = estimate_student_t_parameters(sample)
     results: dict[int, ForecastSummary] = {}
     for horizon in horizons:
         if horizon == 1:
-            simulated = stats.t.rvs(
-                degrees_of_freedom,
-                loc=loc,
-                scale=scale,
-                size=200_000,
-                random_state=rng,
-            )
+            results[horizon] = student_t_forecast_from_sample(sample, confidence, horizon_hours=horizon)
+            continue
         else:
+            degrees_of_freedom, loc, scale = estimate_student_t_parameters(sample)
             simulated = stats.t.rvs(
                 degrees_of_freedom,
                 loc=loc,
@@ -338,11 +390,12 @@ def simulate_jump_diffusion_var(
     horizons: tuple[int, ...],
     n_paths: int,
     rng: np.random.Generator,
+    jump_threshold_sigma: float = 3.0,
 ) -> tuple[dict[int, ForecastSummary], np.ndarray]:
     sample = returns.dropna().to_numpy()
     mu = float(sample.mean())
     sigma = float(sample.std(ddof=1))
-    jump_mask = np.abs(sample - mu) > 3 * sigma
+    jump_mask = np.abs(sample - mu) > jump_threshold_sigma * sigma
     jump_returns = sample[jump_mask]
     jump_intensity = float(len(jump_returns) / max(len(sample), 1))
     jump_mean = float(jump_returns.mean()) if len(jump_returns) else 0.0
@@ -368,6 +421,7 @@ def simulate_jump_diffusion_var(
                 "jump_mean": jump_mean,
                 "jump_std": jump_std,
                 "paths": n_paths,
+                "jump_threshold_sigma": jump_threshold_sigma,
             },
         )
         if horizon == max(horizons):
@@ -377,13 +431,13 @@ def simulate_jump_diffusion_var(
 
 
 class LSTMVolatilityModel(nn.Module):
-    def __init__(self, input_dim: int, hidden_dim: int = 48) -> None:
+    def __init__(self, input_dim: int, hidden_dim: int = 48, num_layers: int = 2, dropout: float = 0.10) -> None:
         super().__init__()
         self.lstm = nn.LSTM(
             input_size=input_dim,
             hidden_size=hidden_dim,
-            num_layers=2,
-            dropout=0.10,
+            num_layers=num_layers,
+            dropout=dropout if num_layers > 1 else 0.0,
             batch_first=True,
         )
         self.head = nn.Sequential(
@@ -506,19 +560,29 @@ def fit_lstm_model(
     input_dim: int,
     confidence: float,
     sequence_length: int = LSTM_SEQUENCE_LENGTH,
-    epochs: int = 8,
+    hidden_dim: int = LSTM_HIDDEN_DIM,
+    num_layers: int = LSTM_NUM_LAYERS,
+    dropout: float = LSTM_DROPOUT,
+    learning_rate: float = LSTM_LEARNING_RATE,
+    batch_size: int = LSTM_BATCH_SIZE,
+    epochs: int = LSTM_FINAL_EPOCHS,
 ) -> dict[str, Any]:
     preferred_device, device_note = select_training_device()
 
     def train_on_device(device: torch.device) -> tuple[LSTMVolatilityModel, list[dict[str, float]]]:
-        model = LSTMVolatilityModel(input_dim=input_dim).to(device)
-        optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
+        model = LSTMVolatilityModel(
+            input_dim=input_dim,
+            hidden_dim=hidden_dim,
+            num_layers=num_layers,
+            dropout=dropout,
+        ).to(device)
+        optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
         train_loader = DataLoader(
             TensorDataset(
                 torch.tensor(datasets["X_train"], dtype=torch.float32),
                 torch.tensor(datasets["y_train"], dtype=torch.float32),
             ),
-            batch_size=256,
+            batch_size=batch_size,
             shuffle=True,
         )
         val_features = torch.tensor(datasets["X_val"], dtype=torch.float32, device=device)
@@ -625,12 +689,18 @@ def fit_vae_model(
     confidence: float,
     backtest_start: pd.Timestamp,
     rng: np.random.Generator,
+    window: int = VAE_WINDOW,
+    latent_dim: int = 6,
+    learning_rate: float = VAE_LEARNING_RATE,
+    batch_size: int = VAE_BATCH_SIZE,
+    epochs: int = VAE_FINAL_EPOCHS,
+    kl_weight: float = 0.05,
 ) -> dict[str, Any]:
     train_series = returns[returns.index < backtest_start].dropna()
-    if len(train_series) <= VAE_WINDOW + 512:
+    if len(train_series) <= window + 512:
         raise RuntimeError("Not enough training observations to fit the VAE model.")
 
-    rolling_windows = np.lib.stride_tricks.sliding_window_view(train_series.to_numpy(dtype=np.float32), window_shape=VAE_WINDOW)
+    rolling_windows = np.lib.stride_tricks.sliding_window_view(train_series.to_numpy(dtype=np.float32), window_shape=window)
     validation_size = max(256, int(len(rolling_windows) * 0.2))
     train_windows = rolling_windows[:-validation_size]
     val_windows = rolling_windows[-validation_size:]
@@ -642,11 +712,11 @@ def fit_vae_model(
     train_scaled = ((train_windows - scale_mean) / scale_std).astype(np.float32)
     val_scaled = ((val_windows - scale_mean) / scale_std).astype(np.float32)
 
-    model = ReturnVAE(window=VAE_WINDOW)
-    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
+    model = ReturnVAE(window=window, latent_dim=latent_dim)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
     train_loader = DataLoader(
         TensorDataset(torch.tensor(train_scaled, dtype=torch.float32)),
-        batch_size=512,
+        batch_size=batch_size,
         shuffle=True,
     )
     val_tensor = torch.tensor(val_scaled, dtype=torch.float32)
@@ -662,7 +732,7 @@ def fit_vae_model(
             reconstruction, mean, logvar = model(batch_inputs)
             recon_loss = torch.mean((reconstruction - batch_inputs) ** 2)
             kl_loss = -0.5 * torch.mean(1 + logvar - mean.pow(2) - logvar.exp())
-            loss = recon_loss + 0.05 * kl_loss
+            loss = recon_loss + kl_weight * kl_loss
             loss.backward()
             optimizer.step()
             batch_losses.append(float(loss.detach().cpu()))
@@ -672,7 +742,7 @@ def fit_vae_model(
             val_reconstruction, val_mean, val_logvar = model(val_tensor)
             val_loss = float(
                 (torch.mean((val_reconstruction - val_tensor) ** 2)
-                + 0.05 * (-0.5 * torch.mean(1 + val_logvar - val_mean.pow(2) - val_logvar.exp()))).detach().cpu()
+                + kl_weight * (-0.5 * torch.mean(1 + val_logvar - val_mean.pow(2) - val_logvar.exp()))).detach().cpu()
             )
         history.append({"epoch": float(epoch), "train_loss": float(np.mean(batch_losses)), "val_loss": val_loss})
         if val_loss < best_val:
@@ -701,7 +771,8 @@ def fit_vae_model(
             1,
             metadata={
                 "model": "VAE latent sampling",
-                "window": VAE_WINDOW,
+                "window": window,
+                "latent_dim": latent_dim,
                 "decoder_runtime": decoder_plan.note,
             },
         ),
@@ -711,7 +782,8 @@ def fit_vae_model(
             24,
             metadata={
                 "model": "VAE latent sampling",
-                "window": VAE_WINDOW,
+                "window": window,
+                "latent_dim": latent_dim,
                 "decoder_runtime": decoder_plan.note,
             },
         ),
@@ -723,6 +795,194 @@ def fit_vae_model(
         "training_history": history,
         "runtime_note": decoder_plan.note,
     }
+
+
+def tune_student_t_window(returns: pd.Series, confidence: float, backtest_start: pd.Timestamp) -> pd.DataFrame:
+    validation_start = backtest_start - pd.Timedelta(days=TUNING_VALIDATION_DAYS)
+    validation_index = returns.loc[validation_start: backtest_start - pd.Timedelta(hours=1)].index[::TUNING_EVAL_STRIDE_HOURS]
+    rows: list[dict[str, Any]] = []
+
+    for window_hours in STUDENT_T_WINDOW_CANDIDATES:
+        actual_values: list[float] = []
+        forecast_values: list[float] = []
+        for timestamp in validation_index:
+            calibration_sample = returns.loc[: timestamp - pd.Timedelta(hours=1)].tail(window_hours)
+            if len(calibration_sample) < window_hours:
+                continue
+            summary = student_t_forecast_from_sample(calibration_sample.to_numpy(dtype=np.float64), confidence)
+            actual_values.append(float(returns.loc[timestamp]))
+            forecast_values.append(summary.var_return)
+
+        if not actual_values:
+            continue
+
+        actual_array = np.asarray(actual_values, dtype=float)
+        forecast_array = np.asarray(forecast_values, dtype=float)
+        rows.append(
+            {
+                "model": "Student-t VaR",
+                "calibration_window_hours": float(window_hours),
+                "calibration_window_days": float(window_hours / 24),
+                "validation_observations": float(len(actual_array)),
+                "validation_quantile_loss": quantile_loss(actual_array, forecast_array, confidence),
+                "validation_violation_rate": float(np.mean(actual_array < forecast_array)),
+            }
+        )
+
+    if not rows:
+        raise RuntimeError("Student-t tuning did not produce any valid validation rows.")
+
+    return pd.DataFrame(rows).sort_values(
+        ["validation_quantile_loss", "validation_violation_rate"], ascending=[True, True]
+    ).reset_index(drop=True)
+
+
+def tune_jump_diffusion_parameters(returns: pd.Series, confidence: float, backtest_start: pd.Timestamp) -> pd.DataFrame:
+    validation_start = backtest_start - pd.Timedelta(days=TUNING_VALIDATION_DAYS)
+    validation_index = returns.loc[validation_start: backtest_start - pd.Timedelta(hours=1)].index[::TUNING_EVAL_STRIDE_HOURS]
+    rows: list[dict[str, Any]] = []
+
+    for window_hours in JUMP_DIFFUSION_WINDOW_CANDIDATES:
+        for jump_threshold_sigma in JUMP_DIFFUSION_THRESHOLD_CANDIDATES:
+            actual_values: list[float] = []
+            forecast_values: list[float] = []
+            for offset, timestamp in enumerate(validation_index):
+                calibration_sample = returns.loc[: timestamp - pd.Timedelta(hours=1)].tail(window_hours)
+                if len(calibration_sample) < window_hours:
+                    continue
+                local_rng = np.random.default_rng(
+                    RANDOM_SEED
+                    + 10_000
+                    + window_hours
+                    + int(jump_threshold_sigma * 100)
+                    + offset
+                )
+                summary = simulate_jump_diffusion_var(
+                    calibration_sample,
+                    confidence,
+                    (1,),
+                    TUNING_MONTE_CARLO_PATHS,
+                    local_rng,
+                    jump_threshold_sigma=jump_threshold_sigma,
+                )[0][1]
+                actual_values.append(float(returns.loc[timestamp]))
+                forecast_values.append(summary.var_return)
+
+            if not actual_values:
+                continue
+
+            actual_array = np.asarray(actual_values, dtype=float)
+            forecast_array = np.asarray(forecast_values, dtype=float)
+            rows.append(
+                {
+                    "model": "Jump-diffusion Monte Carlo",
+                    "calibration_window_hours": float(window_hours),
+                    "calibration_window_days": float(window_hours / 24),
+                    "jump_threshold_sigma": float(jump_threshold_sigma),
+                    "validation_observations": float(len(actual_array)),
+                    "validation_quantile_loss": quantile_loss(actual_array, forecast_array, confidence),
+                    "validation_violation_rate": float(np.mean(actual_array < forecast_array)),
+                }
+            )
+
+    if not rows:
+        raise RuntimeError("Jump-diffusion tuning did not produce any valid validation rows.")
+
+    return pd.DataFrame(rows).sort_values(
+        ["validation_quantile_loss", "validation_violation_rate"], ascending=[True, True]
+    ).reset_index(drop=True)
+
+
+def tune_vae_latent_dim(returns: pd.Series, confidence: float, backtest_start: pd.Timestamp) -> pd.DataFrame:
+    rows: list[dict[str, Any]] = []
+    for latent_dim in VAE_LATENT_DIM_CANDIDATES:
+        local_rng = np.random.default_rng(RANDOM_SEED + 20_000 + latent_dim)
+        result = fit_vae_model(
+            returns,
+            confidence,
+            backtest_start,
+            local_rng,
+            window=VAE_WINDOW,
+            latent_dim=latent_dim,
+            learning_rate=VAE_LEARNING_RATE,
+            batch_size=VAE_BATCH_SIZE,
+            epochs=VAE_TUNING_EPOCHS,
+        )
+        rows.append(
+            {
+                "model": "VAE latent sampling",
+                "window": float(VAE_WINDOW),
+                "latent_dim": float(latent_dim),
+                "validation_loss": min(item["val_loss"] for item in result["training_history"]),
+                "current_1h_var_loss": result["current_forecasts"][1].var_loss,
+                "current_24h_var_loss": result["current_forecasts"][24].var_loss,
+            }
+        )
+
+    return pd.DataFrame(rows).sort_values(["validation_loss", "current_1h_var_loss"], ascending=[True, True]).reset_index(drop=True)
+
+
+def build_model_tuning_summary(
+    student_t_tuning: pd.DataFrame,
+    jump_tuning: pd.DataFrame,
+    lstm_window_sensitivity: pd.DataFrame,
+    vae_tuning: pd.DataFrame,
+) -> tuple[pd.DataFrame, dict[str, Any]]:
+    best_student = student_t_tuning.iloc[0]
+    best_jump = jump_tuning.iloc[0]
+    best_lstm = lstm_window_sensitivity.sort_values(["best_validation_loss", "sigma_tracking_mae"], ascending=[True, True]).iloc[0]
+    best_vae = vae_tuning.iloc[0]
+
+    summary_rows = [
+        {
+            "model": "Student-t VaR",
+            "design": "Parametric heavy-tail baseline",
+            "best_parameters": (
+                f"{int(best_student['calibration_window_days'])}-day rolling window; "
+                "df estimated from sample kurtosis"
+            ),
+            "selection_metric": "Mean pinball loss",
+            "validation_score": float(best_student["validation_quantile_loss"]),
+        },
+        {
+            "model": "Jump-diffusion Monte Carlo",
+            "design": "Diffusion plus calibrated jump scenario engine",
+            "best_parameters": (
+                f"{int(best_jump['calibration_window_days'])}-day rolling window; "
+                f"jump threshold {float(best_jump['jump_threshold_sigma']):.1f} sigma"
+            ),
+            "selection_metric": "Mean pinball loss",
+            "validation_score": float(best_jump["validation_quantile_loss"]),
+        },
+        {
+            "model": "LSTM conditional VaR",
+            "design": "Feature-conditioned recurrent forecaster with Gaussian head",
+            "best_parameters": (
+                f"{int(best_lstm['lookback_hours'])}-hour look-back; "
+                f"{LSTM_NUM_LAYERS} layers; {LSTM_HIDDEN_DIM} hidden units; dropout {LSTM_DROPOUT:.2f}"
+            ),
+            "selection_metric": "Best validation NLL",
+            "validation_score": float(best_lstm["best_validation_loss"]),
+        },
+        {
+            "model": "VAE latent VaR",
+            "design": "Latent generative return model on rolling windows",
+            "best_parameters": f"{int(best_vae['window'])}-hour window; latent dimension {int(best_vae['latent_dim'])}",
+            "selection_metric": "Best validation ELBO",
+            "validation_score": float(best_vae["validation_loss"]),
+        },
+    ]
+
+    config = {
+        "student_t_window_hours": int(best_student["calibration_window_hours"]),
+        "jump_diffusion_window_hours": int(best_jump["calibration_window_hours"]),
+        "jump_threshold_sigma": float(best_jump["jump_threshold_sigma"]),
+        "lstm_sequence_length": int(best_lstm["lookback_hours"]),
+        "vae_window": int(best_vae["window"]),
+        "vae_latent_dim": int(best_vae["latent_dim"]),
+    }
+
+    return pd.DataFrame(summary_rows), config
 
 
 def kupiec_pof_test(actual_returns: pd.Series, var_series: pd.Series, confidence: float) -> dict[str, float]:
@@ -756,6 +1016,9 @@ def run_backtests(
     lstm_predictions: pd.DataFrame,
     vae_var_return: float,
     rng_seed: int,
+    student_t_window_hours: int,
+    jump_diffusion_window_hours: int,
+    jump_threshold_sigma: float,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     returns = feature_frame.set_index("timestamp")["log_return"].dropna()
     backtest_start = returns.index.max() - pd.Timedelta(days=BACKTEST_DAYS)
@@ -768,12 +1031,20 @@ def run_backtests(
         if len(block_index) == 0:
             continue
         calibration_end = block_index[0] - pd.Timedelta(hours=1)
-        calibration_sample = returns.loc[:calibration_end].tail(BACKTEST_WINDOW_HOURS)
-        if len(calibration_sample) < 24 * 30:
+        t_calibration_sample = returns.loc[:calibration_end].tail(student_t_window_hours)
+        mc_calibration_sample = returns.loc[:calibration_end].tail(jump_diffusion_window_hours)
+        if len(t_calibration_sample) < student_t_window_hours or len(mc_calibration_sample) < jump_diffusion_window_hours:
             continue
         block_rng = np.random.default_rng(rng_seed + block_start)
-        t_summary = fit_student_t_var(calibration_sample, confidence, (1,), block_rng)[1]
-        mc_summary = simulate_jump_diffusion_var(calibration_sample, confidence, (1,), MONTE_CARLO_PATHS, block_rng)[0][1]
+        t_summary = fit_student_t_var(t_calibration_sample, confidence, (1,), block_rng)[1]
+        mc_summary = simulate_jump_diffusion_var(
+            mc_calibration_sample,
+            confidence,
+            (1,),
+            MONTE_CARLO_PATHS,
+            block_rng,
+            jump_threshold_sigma=jump_threshold_sigma,
+        )[0][1]
         var_t.loc[block_index] = t_summary.var_return
         var_mc.loc[block_index] = mc_summary.var_return
 
@@ -800,7 +1071,9 @@ def run_backtests(
 
 
 def compute_confidence_sensitivity(
-    recent_returns: pd.Series,
+    student_t_sample: pd.Series,
+    jump_diffusion_sample: pd.Series,
+    jump_threshold_sigma: float,
     lstm_result: dict[str, Any],
     vae_result: dict[str, Any],
 ) -> pd.DataFrame:
@@ -808,8 +1081,15 @@ def compute_confidence_sensitivity(
     rows: list[dict[str, float | str]] = []
     for offset, confidence in enumerate(confidence_levels):
         rng = np.random.default_rng(RANDOM_SEED + 100 + offset)
-        t_forecast = fit_student_t_var(recent_returns, confidence, (1,), rng)[1]
-        mc_forecast = simulate_jump_diffusion_var(recent_returns, confidence, (1,), MONTE_CARLO_PATHS, rng)[0][1]
+        t_forecast = fit_student_t_var(student_t_sample, confidence, (1,), rng)[1]
+        mc_forecast = simulate_jump_diffusion_var(
+            jump_diffusion_sample,
+            confidence,
+            (1,),
+            MONTE_CARLO_PATHS,
+            rng,
+            jump_threshold_sigma=jump_threshold_sigma,
+        )[0][1]
         lstm_forecast = normal_forecast_from_params(
             lstm_result["latest_mean_return"],
             lstm_result["latest_sigma"],
@@ -869,9 +1149,10 @@ def compute_lstm_window_sensitivity(
     confidence: float,
     base_result: dict[str, Any],
 ) -> pd.DataFrame:
+    base_lookback_hours = int(base_result["current_forecast"].metadata.get("sequence_length", LSTM_SEQUENCE_LENGTH))
     rows = [
         {
-            "lookback_hours": LSTM_SEQUENCE_LENGTH,
+            "lookback_hours": base_lookback_hours,
             "best_validation_loss": min(item["val_loss"] for item in base_result["training_history"]),
             "sigma_tracking_mae": float((base_result["predictions"]["sigma"] - base_result["predictions"]["actual_return"].abs()).abs().mean()),
             "current_VaR_loss": base_result["current_forecast"].var_loss,
@@ -915,17 +1196,28 @@ def build_pre_event_warning_frame(
     event_timestamp: pd.Timestamp,
     confidence: float,
     rng_seed: int,
+    student_t_window_hours: int,
+    jump_diffusion_window_hours: int,
+    jump_threshold_sigma: float,
 ) -> pd.DataFrame:
     start_timestamp = event_timestamp - pd.Timedelta(hours=24)
     evaluation_index = pd.date_range(start_timestamp, event_timestamp - pd.Timedelta(hours=1), freq="h", tz="UTC")
     rows: list[dict[str, Any]] = []
     for offset, forecast_timestamp in enumerate(evaluation_index):
-        calibration_sample = returns.loc[: forecast_timestamp - pd.Timedelta(hours=1)].tail(RECENT_WINDOW_HOURS)
-        if len(calibration_sample) < 24 * 30:
+        student_t_sample = returns.loc[: forecast_timestamp - pd.Timedelta(hours=1)].tail(student_t_window_hours)
+        jump_diffusion_sample = returns.loc[: forecast_timestamp - pd.Timedelta(hours=1)].tail(jump_diffusion_window_hours)
+        if len(student_t_sample) < student_t_window_hours or len(jump_diffusion_sample) < jump_diffusion_window_hours:
             continue
         block_rng = np.random.default_rng(rng_seed + offset)
-        t_forecast = fit_student_t_var(calibration_sample, confidence, (1,), block_rng)[1]
-        mc_forecast = simulate_jump_diffusion_var(calibration_sample, confidence, (1,), MONTE_CARLO_PATHS, block_rng)[0][1]
+        t_forecast = fit_student_t_var(student_t_sample, confidence, (1,), block_rng)[1]
+        mc_forecast = simulate_jump_diffusion_var(
+            jump_diffusion_sample,
+            confidence,
+            (1,),
+            MONTE_CARLO_PATHS,
+            block_rng,
+            jump_threshold_sigma=jump_threshold_sigma,
+        )[0][1]
         rows.append(
             {
                 "forecast_timestamp": forecast_timestamp,
@@ -936,7 +1228,13 @@ def build_pre_event_warning_frame(
     return pd.DataFrame(rows)
 
 
-def compute_stress_test_analysis(feature_frame: pd.DataFrame, confidence: float) -> tuple[pd.DataFrame, dict[str, pd.DataFrame]]:
+def compute_stress_test_analysis(
+    feature_frame: pd.DataFrame,
+    confidence: float,
+    student_t_window_hours: int,
+    jump_diffusion_window_hours: int,
+    jump_threshold_sigma: float,
+) -> tuple[pd.DataFrame, dict[str, pd.DataFrame]]:
     returns = feature_frame.set_index("timestamp")["log_return"].dropna()
     event_specs = [
         ("FTX Collapse", "2022-11-07T00:00:00+00:00", "2022-11-10T23:00:00+00:00", "loss"),
@@ -948,11 +1246,27 @@ def compute_stress_test_analysis(feature_frame: pd.DataFrame, confidence: float)
         event_timestamp = select_event_timestamp(returns, start, end, mode)
         actual_return = float(returns.loc[event_timestamp])
         actual_loss = float(-actual_return)
-        calibration_sample = returns.loc[: event_timestamp - pd.Timedelta(hours=1)].tail(RECENT_WINDOW_HOURS)
+        student_t_sample = returns.loc[: event_timestamp - pd.Timedelta(hours=1)].tail(student_t_window_hours)
+        jump_diffusion_sample = returns.loc[: event_timestamp - pd.Timedelta(hours=1)].tail(jump_diffusion_window_hours)
         event_rng = np.random.default_rng(RANDOM_SEED + 500 + index)
-        t_forecast = fit_student_t_var(calibration_sample, confidence, (1,), event_rng)[1]
-        mc_forecast = simulate_jump_diffusion_var(calibration_sample, confidence, (1,), MONTE_CARLO_PATHS, event_rng)[0][1]
-        warning_frame = build_pre_event_warning_frame(returns, event_timestamp, confidence, RANDOM_SEED + 700 + index * 100)
+        t_forecast = fit_student_t_var(student_t_sample, confidence, (1,), event_rng)[1]
+        mc_forecast = simulate_jump_diffusion_var(
+            jump_diffusion_sample,
+            confidence,
+            (1,),
+            MONTE_CARLO_PATHS,
+            event_rng,
+            jump_threshold_sigma=jump_threshold_sigma,
+        )[0][1]
+        warning_frame = build_pre_event_warning_frame(
+            returns,
+            event_timestamp,
+            confidence,
+            RANDOM_SEED + 700 + index * 100,
+            student_t_window_hours,
+            jump_diffusion_window_hours,
+            jump_threshold_sigma,
+        )
         warning_threshold = 0.5 * actual_loss
         t_peak_row = warning_frame.loc[warning_frame["t_var_loss"].idxmax()]
         mc_peak_row = warning_frame.loc[warning_frame["mc_var_loss"].idxmax()]
@@ -1042,14 +1356,41 @@ def compute_capital_requirements(current_var_table: pd.DataFrame, notional_usd: 
 
 
 def to_markdown_table(frame: pd.DataFrame, precision: int = 4) -> str:
-    display_frame = frame.copy()
-    for column in display_frame.columns:
-        if pd.api.types.is_numeric_dtype(display_frame[column]):
-            display_frame[column] = display_frame[column].map(lambda value: f"{value:.{precision}f}")
+    display_frame = format_table_values(frame, precision)
     headers = [str(column) for column in display_frame.columns]
     separator = ["---"] * len(headers)
     rows = [headers, separator] + display_frame.astype(str).values.tolist()
     return "\n".join("| " + " | ".join(row) + " |" for row in rows)
+
+
+def format_numeric_value(value: Any, precision: int = 4) -> str:
+    if pd.isna(value):
+        return ""
+    if isinstance(value, (np.integer, int)):
+        return str(int(value))
+    if isinstance(value, (np.floating, float)):
+        rounded = f"{float(value):.{precision}f}"
+        if "." in rounded:
+            rounded = rounded.rstrip("0").rstrip(".")
+        if rounded == "-0":
+            rounded = "0"
+        return rounded
+    return str(value)
+
+
+def format_table_values(frame: pd.DataFrame, precision: int = 4) -> pd.DataFrame:
+    display_frame = frame.copy()
+    for column in frame.columns:
+        column_name = str(column).lower()
+        source_series = frame[column]
+        if "p-val" in column_name or "pvalue" in column_name or "p-value" in column_name:
+            threshold = 10 ** (-precision)
+            display_frame[column] = source_series.map(
+                lambda value: f"<{threshold:.{precision}f}" if not pd.isna(value) and float(value) <= threshold else format_numeric_value(value, precision)
+            )
+        elif pd.api.types.is_numeric_dtype(source_series):
+            display_frame[column] = source_series.map(lambda value: format_numeric_value(value, precision))
+    return display_frame
 
 
 REPORT_MODEL_LABELS = {
@@ -1061,7 +1402,7 @@ REPORT_MODEL_LABELS = {
 }
 
 REPORT_EVENT_LABELS = {
-    "Spot ETF Approval Whipsaw": "ETF approval whipsaw",
+    "Spot ETF Approval Whipsaw": "ETF whipsaw",
 }
 
 
@@ -1082,14 +1423,22 @@ def format_report_timestamp(value: Any) -> Any:
 def format_report_table(frame: pd.DataFrame, rename_columns: dict[str, str] | None = None) -> pd.DataFrame:
     display_frame = frame.copy()
 
-    for column in ("model", "strongest_warning_model", "closest_model_to_realized_loss"):
+    for column in (
+        "model",
+        "Model",
+        "strongest_warning_model",
+        "Strongest warning",
+        "closest_model_to_realized_loss",
+        "Closest model",
+    ):
         if column in display_frame.columns:
             display_frame[column] = display_frame[column].replace(REPORT_MODEL_LABELS)
 
-    if "event" in display_frame.columns:
-        display_frame["event"] = display_frame["event"].replace(REPORT_EVENT_LABELS)
+    for column in ("event", "Event"):
+        if column in display_frame.columns:
+            display_frame[column] = display_frame[column].replace(REPORT_EVENT_LABELS)
 
-    for column in ("event_timestamp", "start", "end"):
+    for column in ("event_timestamp", "Event time", "start", "Start", "end", "End"):
         if column in display_frame.columns:
             display_frame[column] = display_frame[column].map(format_report_timestamp)
 
@@ -1097,6 +1446,291 @@ def format_report_table(frame: pd.DataFrame, rename_columns: dict[str, str] | No
         display_frame = display_frame.rename(columns=rename_columns)
 
     return display_frame
+
+
+def write_latex_table(
+    path: Path,
+    frame: pd.DataFrame,
+    *,
+    precision: int = 4,
+    column_format: str,
+    font_size: str = "footnotesize",
+    tabcolsep: str = "3pt",
+    longtable: bool = True,
+    center: bool = False,
+) -> None:
+    display_frame = format_table_values(frame, precision).astype(str)
+    latex = display_frame.to_latex(index=False, escape=True, longtable=longtable, column_format=column_format)
+    if center:
+        latex = f"\\begin{{center}}\n{latex}\\end{{center}}\n"
+    path.write_text(
+        f"\\begingroup\n\\{font_size}\n\\setlength{{\\tabcolsep}}{{{tabcolsep}}}\n{latex}\\endgroup\n",
+        encoding="utf-8",
+    )
+
+
+def export_analysis_tables(
+    paths: ProjectPaths,
+    data_quality: dict[str, Any],
+    descriptive_stats: dict[str, float],
+    current_var_table: pd.DataFrame,
+    model_tuning_summary: pd.DataFrame,
+    backtest_summary: pd.DataFrame,
+    confidence_sensitivity: pd.DataFrame,
+    student_t_sensitivity: pd.DataFrame,
+    lstm_window_sensitivity: pd.DataFrame,
+    stress_test_table: pd.DataFrame,
+    scaling_table: pd.DataFrame,
+    autocorr_table: pd.DataFrame,
+    capital_table: pd.DataFrame,
+) -> dict[str, str]:
+    data_quality_display = format_report_table(
+        pd.DataFrame([data_quality]).rename(
+            columns={
+                "original_rows": "Original rows",
+                "cleaned_rows": "Clean rows",
+                "missing_hours_filled": "Missing hours",
+                "duplicate_rows_removed": "Duplicates removed",
+                "flash_crash_repairs": "Flash-crash repairs",
+                "start": "Start",
+                "end": "End",
+            }
+        )
+    )
+    descriptive_frame = pd.DataFrame([descriptive_stats]).rename(
+        columns={
+            "observations": "Obs.",
+            "mean": "Mean",
+            "std": "Std.",
+            "skewness": "Skew",
+            "kurtosis": "Kurtosis",
+            "jarque_bera_stat": "JB stat",
+            "jarque_bera_pvalue": "JB p-val",
+            "adf_stat": "ADF stat",
+            "adf_pvalue": "ADF p-val",
+            "adf_critical_1pct": "ADF 1% crit",
+            "adf_critical_5pct": "ADF 5% crit",
+            "adf_critical_10pct": "ADF 10% crit",
+            "min": "Min",
+            "max": "Max",
+            "p01": "P1",
+            "p99": "P99",
+        }
+    )
+    descriptive_main = descriptive_frame[["Obs.", "Mean", "Std.", "Skew", "Kurtosis", "JB stat", "JB p-val", "ADF stat"]]
+    descriptive_tail = descriptive_frame[["ADF p-val", "ADF 1% crit", "ADF 5% crit", "ADF 10% crit", "Min", "Max", "P1", "P99"]]
+    current_var_display = format_report_table(
+        current_var_table.rename(
+            columns={
+                "model": "Model",
+                "horizon_hours": "Horizon (h)",
+                "VaR_return": "VaR ret.",
+                "CVaR_return": "CVaR ret.",
+                "VaR_loss": "VaR loss",
+                "CVaR_loss": "CVaR loss",
+                "mean_return": "Mean ret.",
+                "volatility": "Vol.",
+            }
+        )
+    )
+    model_tuning_display = format_report_table(
+        model_tuning_summary.rename(
+            columns={
+                "model": "Model",
+                "design": "Design",
+                "best_parameters": "Best parameters",
+                "selection_metric": "Selection metric",
+                "validation_score": "Validation score",
+            }
+        )
+    )
+    confidence_display = format_report_table(
+        confidence_sensitivity.rename(
+            columns={
+                "confidence_level_pct": "Conf. (%)",
+                "model": "Model",
+                "VaR_loss": "VaR loss",
+                "CVaR_loss": "CVaR loss",
+                "volatility": "Vol.",
+            }
+        )
+    )
+    student_t_display = student_t_sensitivity.rename(
+        columns={
+            "degrees_of_freedom": "DoF",
+            "VaR_return": "VaR ret.",
+            "VaR_loss": "VaR loss",
+            "tail_ratio_to_sigma": "Tail ratio / sigma",
+            "is_estimated_setting": "Estimated fit",
+        }
+    )
+    lstm_display = lstm_window_sensitivity.rename(
+        columns={
+            "lookback_hours": "Look-back (h)",
+            "best_validation_loss": "Best val. loss",
+            "sigma_tracking_mae": "Sigma MAE",
+            "current_VaR_loss": "Current VaR loss",
+            "current_sigma": "Current sigma",
+        }
+    )
+    stress_display = format_report_table(stress_test_table)
+    stress_overview = stress_display[
+        [
+            "event",
+            "event_timestamp",
+            "actual_return",
+            "actual_loss",
+            "student_t_VaR_loss",
+            "mc_VaR_loss",
+            "closest_model_to_realized_loss",
+        ]
+    ].rename(
+        columns={
+            "event": "Event",
+            "event_timestamp": "Event time",
+            "actual_return": "Realized return",
+            "actual_loss": "Realized loss",
+            "student_t_VaR_loss": "t-VaR loss",
+            "mc_VaR_loss": "MC VaR loss",
+            "closest_model_to_realized_loss": "Closest model",
+        }
+    )
+    stress_warning = stress_display[
+        [
+            "event",
+            "student_t_peak_warning_loss",
+            "mc_peak_warning_loss",
+            "student_t_peak_warning_hours_before_event",
+            "mc_peak_warning_hours_before_event",
+            "strongest_warning_model",
+        ]
+    ].rename(
+        columns={
+            "event": "Event",
+            "student_t_peak_warning_loss": "t peak warning",
+            "mc_peak_warning_loss": "MC peak warning",
+            "student_t_peak_warning_hours_before_event": "t peak lead (h)",
+            "mc_peak_warning_hours_before_event": "MC peak lead (h)",
+            "strongest_warning_model": "Strongest warning",
+        }
+    )
+    scaling_display = scaling_table.rename(
+        columns={
+            "horizon": "Horizon",
+            "sqrt_time_scaled_VaR": "Scaled VaR",
+            "empirical_VaR": "Empirical VaR",
+            "scaling_bias_pct": "Scaling bias %",
+        }
+    )
+    autocorr_display = autocorr_table.rename(
+        columns={
+            "return_autocorr_lag1": "r(1)",
+            "return_autocorr_lag24": "r(24)",
+            "abs_return_autocorr_lag1": "|r|(1)",
+            "abs_return_autocorr_lag24": "|r|(24)",
+            "ljung_box_return_pvalue_lag24": "LB p-value r(24)",
+            "ljung_box_abs_return_pvalue_lag24": "LB p-value |r|(24)",
+        }
+    )
+    capital_display = format_report_table(
+        capital_table.rename(
+            columns={
+                "position_notional_usd": "Notional USD",
+                "model": "Model",
+                "horizon_hours": "Horizon (h)",
+                "VaR_capital_usd": "VaR capital",
+                "CVaR_capital_usd": "CVaR capital",
+            }
+        )
+    )
+    backtest_display = format_report_table(
+        backtest_summary.rename(
+            columns={
+                "model": "Model",
+                "observations": "Obs.",
+                "violations": "Viol.",
+                "expected_violation_rate": "Exp. fail rate",
+                "observed_violation_rate": "Obs. fail rate",
+                "kupiec_lr": "LR_POF",
+                "kupiec_pvalue": "p-value",
+            }
+        )
+    )
+
+    table_specs = [
+        (
+            "data_quality.tex",
+            data_quality_display,
+            4,
+            "@{}>{\\RaggedLeft\\arraybackslash}p{0.10\\linewidth}>{\\RaggedLeft\\arraybackslash}p{0.10\\linewidth}>{\\RaggedLeft\\arraybackslash}p{0.11\\linewidth}>{\\RaggedLeft\\arraybackslash}p{0.12\\linewidth}>{\\RaggedLeft\\arraybackslash}p{0.12\\linewidth}>{\\RaggedRight\\arraybackslash}p{0.16\\linewidth}>{\\RaggedRight\\arraybackslash}p{0.16\\linewidth}@{}",
+            "scriptsize",
+            "2pt",
+        ),
+        ("descriptive_statistics_main.tex", descriptive_main, 4, "@{}llllllll@{}", "footnotesize", "3pt"),
+        ("descriptive_statistics_tail.tex", descriptive_tail, 4, "@{}llllllll@{}", "footnotesize", "3pt"),
+        (
+            "current_var_estimates.tex",
+            current_var_display,
+            4,
+            "@{}>{\\RaggedRight\\arraybackslash}p{0.18\\linewidth}*{7}{>{\\RaggedLeft\\arraybackslash}p{0.09\\linewidth}}@{}",
+            "scriptsize",
+            "2pt",
+        ),
+        (
+            "model_tuning_summary.tex",
+            model_tuning_display,
+            4,
+            "@{}>{\\RaggedRight\\arraybackslash}p{0.15\\linewidth}>{\\RaggedRight\\arraybackslash}p{0.24\\linewidth}>{\\RaggedRight\\arraybackslash}p{0.31\\linewidth}>{\\RaggedRight\\arraybackslash}p{0.16\\linewidth}>{\\RaggedLeft\\arraybackslash}p{0.10\\linewidth}@{}",
+            "scriptsize",
+            "2pt",
+        ),
+        (
+            "confidence_sensitivity.tex",
+            confidence_display,
+            4,
+            "@{}>{\\RaggedLeft\\arraybackslash}p{0.11\\linewidth}>{\\RaggedRight\\arraybackslash}p{0.24\\linewidth}*{3}{>{\\RaggedLeft\\arraybackslash}p{0.12\\linewidth}}@{}",
+            "footnotesize",
+            "3pt",
+        ),
+        ("student_t_df_sensitivity.tex", student_t_display, 4, "@{}lllll@{}", "footnotesize", "2pt"),
+        ("lstm_window_sensitivity.tex", lstm_display, 4, "@{}lllll@{}", "footnotesize", "2pt"),
+        ("stress_test_overview.tex", stress_overview, 4, "@{}lllllll@{}", "scriptsize", "3pt"),
+        ("stress_test_warnings.tex", stress_warning, 4, "@{}llllll@{}", "scriptsize", "3pt"),
+        ("time_scale_scaling.tex", scaling_display, 4, "@{}llll@{}", "footnotesize", "3pt"),
+        ("autocorrelation_summary.tex", autocorr_display, 4, "@{}llllll@{}", "footnotesize", "2pt"),
+        (
+            "capital_requirements.tex",
+            capital_display,
+            2,
+            "@{}>{\\RaggedLeft\\arraybackslash}p{0.16\\linewidth}>{\\RaggedRight\\arraybackslash}p{0.22\\linewidth}*{3}{>{\\RaggedLeft\\arraybackslash}p{0.13\\linewidth}}@{}",
+            "footnotesize",
+            "3pt",
+        ),
+        (
+            "kupiec_backtest_summary.tex",
+            backtest_display,
+            4,
+            "@{}>{\\RaggedRight\\arraybackslash}p{0.19\\linewidth}*{6}{>{\\RaggedLeft\\arraybackslash}p{0.10\\linewidth}}@{}",
+            "footnotesize",
+            "2pt",
+        ),
+    ]
+
+    tex_paths: dict[str, str] = {}
+    for filename, frame, precision, column_format, font_size, tabcolsep in table_specs:
+        output_path = paths.tables_dir / filename
+        write_latex_table(
+            output_path,
+            frame,
+            precision=precision,
+            column_format=column_format,
+            font_size=font_size,
+            tabcolsep=tabcolsep,
+            longtable=filename != "model_tuning_summary.tex",
+            center=filename == "model_tuning_summary.tex",
+        )
+        tex_paths[output_path.stem] = str(output_path)
+    return tex_paths
 
 
 def save_figures(
@@ -1247,6 +1881,7 @@ def render_report(
     data_quality: dict[str, Any],
     descriptive_stats: dict[str, float],
     current_var_table: pd.DataFrame,
+    model_tuning_summary: pd.DataFrame,
     backtest_summary: pd.DataFrame,
     confidence_sensitivity: pd.DataFrame,
     student_t_sensitivity: pd.DataFrame,
@@ -1294,6 +1929,16 @@ def render_report(
             "volatility": "volatility",
         },
     )
+    model_tuning_display = format_report_table(
+        model_tuning_summary,
+        {
+            "model": "model",
+            "design": "design",
+            "best_parameters": "best_parameters",
+            "selection_metric": "selection_metric",
+            "validation_score": "validation_score",
+        },
+    )
     confidence_display = format_report_table(confidence_sensitivity)
     stress_display = format_report_table(stress_test_table)
     capital_display = format_report_table(capital_table)
@@ -1308,7 +1953,8 @@ def render_report(
     methodology = (
         "The pipeline begins with market data engineering. Hourly candles are fetched directly from the exchange API, then reindexed to a continuous hourly clock to eliminate gaps in the time axis. Missing bars are interpolated conservatively, duplicates are removed, and single-bar flash-crash artefacts are repaired only when the move is immediately reversed and the net two-hour move is small. This preserves genuine market shocks while reducing obvious feed noise. Log returns are then calculated, followed by rolling 24-hour and 168-hour volatility, RSI, MACD, and a rolling volume z-score. These engineered features feed the downstream conditional risk models."
         "\n\nThe statistical section tests whether simple Gaussian assumptions are defensible. Jarque-Bera quantifies departures from normality, skewness and kurtosis measure asymmetry and tail thickness, and the Augmented Dickey-Fuller test evaluates whether the return series is stationary enough to support modeling. In practice, Bitcoin hourly returns typically fail normality decisively while remaining stationary in mean, which is the exact combination that motivates Student-t VaR, Monte Carlo simulation with jumps, and neural network volatility forecasting."
-        "\n\nFour model families are implemented. Method A is a parametric Student-t VaR, calibrated on the latest ninety days of hourly returns, to capture excess kurtosis in a compact distributional form. Method B is a 10,000-path jump-diffusion Monte Carlo engine that retains Gaussian diffusion but adds empirically calibrated jump intensity and jump magnitude to reflect crypto discontinuities. Method C is a PyTorch LSTM with a Gaussian output head that predicts next-hour conditional mean and volatility from rolling features and then maps the predictive distribution into VaR and CVaR. Method D is a PyTorch variational autoencoder trained on rolling 24-hour return windows; it learns a latent representation of return dynamics and generates synthetic paths by sampling from latent space."
+        "\n\nFour model families are implemented. Method A is a parametric Student-t VaR, calibrated on a rolling return window selected by validation, to capture excess kurtosis in a compact distributional form. Method B is a 10,000-path jump-diffusion Monte Carlo engine that retains Gaussian diffusion but adds empirically calibrated jump intensity and jump magnitude to reflect crypto discontinuities. Method C is a PyTorch LSTM with a Gaussian output head that predicts next-hour conditional mean and volatility from rolling features and then maps the predictive distribution into VaR and CVaR. Method D is a PyTorch variational autoencoder trained on rolling 24-hour return windows; it learns a latent representation of return dynamics and generates synthetic paths by sampling from latent space."
+        "\n\nThe final model settings are selected on the pre-backtest training history only, so the comparison remains out of sample. Student-t and jump diffusion are tuned on rolling calibration windows, the LSTM uses the best look-back window from the validation sweep, and the VAE uses the best latent size before any backtest or stress episode is evaluated."
     )
 
     results_text = (
@@ -1317,7 +1963,7 @@ def render_report(
         f"The Jarque-Bera statistic is {descriptive_stats['jarque_bera_stat']:.2f} with p-value {descriptive_stats['jarque_bera_pvalue']:.4g}, which rejects normality by a wide margin. "
         f"Skewness is {descriptive_stats['skewness']:.3f} and kurtosis is {descriptive_stats['kurtosis']:.3f}, confirming an asymmetric and leptokurtic distribution. "
         f"At the same time, the ADF statistic of {descriptive_stats['adf_stat']:.3f} with p-value {descriptive_stats['adf_pvalue']:.4g} supports stationarity of hourly returns, so the data are suitable for conditional modeling."
-        "\n\nAcross the current forecast set, the one-hour VaR estimates differ meaningfully by methodology. Student-t VaR is parsimonious and directly responsive to heavy tails, but it assumes identically distributed shocks over the calibration window. The Monte Carlo model is more flexible because it can separate diffusion from jumps and also extends naturally to multi-period forecasts. The LSTM reacts to state variables such as recent volatility, RSI, MACD, and abnormal volume, which makes it the most explicitly conditional model in the stack. The VAE is different again: it does not forecast a point volatility path but instead learns a latent manifold of plausible return windows and samples from that manifold to infer risk."
+        "\n\nAcross the tuned forecast set, the one-hour VaR estimates differ meaningfully by methodology. Student-t VaR is parsimonious and directly responsive to heavy tails, but it assumes identically distributed shocks over the calibration window. The Monte Carlo model is more flexible because it can separate diffusion from jumps and also extends naturally to multi-period forecasts. The LSTM reacts to state variables such as recent volatility, RSI, MACD, and abnormal volume, which makes it the most explicitly conditional model in the stack. The VAE is different again: it does not forecast a point volatility path but instead learns a latent manifold of plausible return windows and samples from that manifold to infer risk."
         "\n\nBacktesting over the last year uses the Kupiec proportion-of-failures framework. A model with reliable tail calibration should produce violation rates close to the nominal tail probability and should not be rejected by the likelihood ratio test. In practice, Bitcoin's regime shifts make unconditional models vulnerable when the market transitions from calm to stressed states. Conditional models such as the LSTM often improve responsiveness, while the jump-diffusion Monte Carlo sits between structural realism and calibration complexity. The VAE is best interpreted here as an exploratory generative benchmark rather than a fully conditional production VaR engine, so its unconditional violation rate is informative about latent-distribution realism rather than full real-time adaptability."
     )
 
@@ -1371,6 +2017,10 @@ The dataset was built from hourly Binance BTC/USDT spot candles beginning on {da
 ## Methodology
 
 {methodology}
+
+### Tuned Model Settings
+
+{to_markdown_table(model_tuning_display)}
 
 The downside tail metrics used in the report follow the standard left-tail definitions:
 
@@ -1504,16 +2154,6 @@ def run_analysis(refresh_data: bool = False) -> dict[str, str]:
     backtest_start = feature_frame["timestamp"].max() - pd.Timedelta(days=BACKTEST_DAYS)
     rng = np.random.default_rng(RANDOM_SEED)
 
-    recent_returns = returns.tail(RECENT_WINDOW_HOURS)
-    t_results = fit_student_t_var(recent_returns, DEFAULT_CONFIDENCE, HORIZON_HOURS, rng)
-    mc_results, mc_sample_paths = simulate_jump_diffusion_var(
-        recent_returns,
-        DEFAULT_CONFIDENCE,
-        HORIZON_HOURS,
-        MONTE_CARLO_PATHS,
-        rng,
-    )
-
     feature_columns = [
         "log_return",
         "rolling_vol_24h",
@@ -1523,9 +2163,87 @@ def run_analysis(refresh_data: bool = False) -> dict[str, str]:
         "macd_signal",
         "volume_zscore",
     ]
-    lstm_datasets = build_lstm_datasets(feature_frame, feature_columns, LSTM_SEQUENCE_LENGTH, backtest_start)
-    lstm_result = fit_lstm_model(lstm_datasets, len(feature_columns), DEFAULT_CONFIDENCE)
-    vae_result = fit_vae_model(returns, DEFAULT_CONFIDENCE, backtest_start, rng)
+
+    student_t_tuning = tune_student_t_window(returns, DEFAULT_CONFIDENCE, backtest_start)
+    jump_tuning = tune_jump_diffusion_parameters(returns, DEFAULT_CONFIDENCE, backtest_start)
+
+    lstm_base_datasets = build_lstm_datasets(feature_frame, feature_columns, LSTM_SEQUENCE_LENGTH, backtest_start)
+    lstm_base_result = fit_lstm_model(
+        lstm_base_datasets,
+        len(feature_columns),
+        DEFAULT_CONFIDENCE,
+        sequence_length=LSTM_SEQUENCE_LENGTH,
+        hidden_dim=LSTM_HIDDEN_DIM,
+        num_layers=LSTM_NUM_LAYERS,
+        dropout=LSTM_DROPOUT,
+        learning_rate=LSTM_LEARNING_RATE,
+        batch_size=LSTM_BATCH_SIZE,
+        epochs=LSTM_FINAL_EPOCHS,
+    )
+    lstm_window_sensitivity = compute_lstm_window_sensitivity(
+        feature_frame,
+        feature_columns,
+        backtest_start,
+        DEFAULT_CONFIDENCE,
+        lstm_base_result,
+    )
+
+    vae_tuning = tune_vae_latent_dim(returns, DEFAULT_CONFIDENCE, backtest_start)
+    model_tuning_summary, tuned_config = build_model_tuning_summary(
+        student_t_tuning,
+        jump_tuning,
+        lstm_window_sensitivity,
+        vae_tuning,
+    )
+
+    student_t_window_hours = tuned_config["student_t_window_hours"]
+    jump_diffusion_window_hours = tuned_config["jump_diffusion_window_hours"]
+    jump_threshold_sigma = tuned_config["jump_threshold_sigma"]
+    lstm_sequence_length = tuned_config["lstm_sequence_length"]
+    vae_window = tuned_config["vae_window"]
+    vae_latent_dim = tuned_config["vae_latent_dim"]
+
+    student_t_sample = returns.tail(student_t_window_hours)
+    jump_diffusion_sample = returns.tail(jump_diffusion_window_hours)
+
+    t_results = fit_student_t_var(student_t_sample, DEFAULT_CONFIDENCE, HORIZON_HOURS, rng)
+    mc_results, mc_sample_paths = simulate_jump_diffusion_var(
+        jump_diffusion_sample,
+        DEFAULT_CONFIDENCE,
+        HORIZON_HOURS,
+        MONTE_CARLO_PATHS,
+        rng,
+        jump_threshold_sigma=jump_threshold_sigma,
+    )
+
+    if lstm_sequence_length == LSTM_SEQUENCE_LENGTH:
+        lstm_datasets = lstm_base_datasets
+        lstm_result = lstm_base_result
+    else:
+        lstm_datasets = build_lstm_datasets(feature_frame, feature_columns, lstm_sequence_length, backtest_start)
+        lstm_result = fit_lstm_model(
+            lstm_datasets,
+            len(feature_columns),
+            DEFAULT_CONFIDENCE,
+            sequence_length=lstm_sequence_length,
+            hidden_dim=LSTM_HIDDEN_DIM,
+            num_layers=LSTM_NUM_LAYERS,
+            dropout=LSTM_DROPOUT,
+            learning_rate=LSTM_LEARNING_RATE,
+            batch_size=LSTM_BATCH_SIZE,
+            epochs=LSTM_FINAL_EPOCHS,
+        )
+    vae_result = fit_vae_model(
+        returns,
+        DEFAULT_CONFIDENCE,
+        backtest_start,
+        rng,
+        window=vae_window,
+        latent_dim=vae_latent_dim,
+        learning_rate=VAE_LEARNING_RATE,
+        batch_size=VAE_BATCH_SIZE,
+        epochs=VAE_FINAL_EPOCHS,
+    )
 
     backtest_summary, backtest_frame = run_backtests(
         feature_frame,
@@ -1533,6 +2251,9 @@ def run_analysis(refresh_data: bool = False) -> dict[str, str]:
         lstm_result["predictions"],
         vae_result["backtest_var_return"],
         RANDOM_SEED,
+        student_t_window_hours,
+        jump_diffusion_window_hours,
+        jump_threshold_sigma,
     )
 
     current_var_rows = []
@@ -1557,8 +2278,14 @@ def run_analysis(refresh_data: bool = False) -> dict[str, str]:
             )
     current_var_table = pd.DataFrame(current_var_rows).sort_values(["horizon_hours", "model"]).reset_index(drop=True)
 
-    confidence_sensitivity = compute_confidence_sensitivity(recent_returns, lstm_result, vae_result)
-    student_t_sensitivity = compute_student_t_parameter_sensitivity(recent_returns, DEFAULT_CONFIDENCE)
+    confidence_sensitivity = compute_confidence_sensitivity(
+        student_t_sample,
+        jump_diffusion_sample,
+        jump_threshold_sigma,
+        lstm_result,
+        vae_result,
+    )
+    student_t_sensitivity = compute_student_t_parameter_sensitivity(student_t_sample, DEFAULT_CONFIDENCE)
     lstm_window_sensitivity = compute_lstm_window_sensitivity(
         feature_frame,
         feature_columns,
@@ -1566,7 +2293,13 @@ def run_analysis(refresh_data: bool = False) -> dict[str, str]:
         DEFAULT_CONFIDENCE,
         lstm_result,
     )
-    stress_test_table, stress_warning_frames = compute_stress_test_analysis(feature_frame, DEFAULT_CONFIDENCE)
+    stress_test_table, stress_warning_frames = compute_stress_test_analysis(
+        feature_frame,
+        DEFAULT_CONFIDENCE,
+        student_t_window_hours,
+        jump_diffusion_window_hours,
+        jump_threshold_sigma,
+    )
     scaling_table, autocorr_table = compute_time_scale_diagnostics(returns, DEFAULT_CONFIDENCE)
     capital_table = compute_capital_requirements(current_var_table)
 
@@ -1576,6 +2309,7 @@ def run_analysis(refresh_data: bool = False) -> dict[str, str]:
     confidence_sensitivity.to_csv(paths.tables_dir / "confidence_sensitivity.csv", index=False)
     student_t_sensitivity.to_csv(paths.tables_dir / "student_t_df_sensitivity.csv", index=False)
     lstm_window_sensitivity.to_csv(paths.tables_dir / "lstm_window_sensitivity.csv", index=False)
+    model_tuning_summary.to_csv(paths.tables_dir / "model_tuning_summary.csv", index=False)
     stress_test_table.to_csv(paths.tables_dir / "stress_test_analysis.csv", index=False)
     scaling_table.to_csv(paths.tables_dir / "time_scale_scaling.csv", index=False)
     autocorr_table.to_csv(paths.tables_dir / "autocorrelation_summary.csv", index=False)
@@ -1594,10 +2328,47 @@ def run_analysis(refresh_data: bool = False) -> dict[str, str]:
         stress_warning_frames,
         paths,
     )
-    report = render_report(
+    table_tex_paths = export_analysis_tables(
+        paths,
         data_quality,
         descriptive_stats,
         current_var_table,
+        model_tuning_summary,
+        backtest_summary,
+        confidence_sensitivity,
+        student_t_sensitivity,
+        lstm_window_sensitivity,
+        stress_test_table,
+        scaling_table,
+        autocorr_table,
+        capital_table,
+    )
+
+    results_payload = {
+        "data_quality": data_quality,
+        "descriptive_statistics": descriptive_stats,
+        "current_var_estimates": current_var_table.to_dict(orient="records"),
+        "model_tuning_summary": model_tuning_summary.to_dict(orient="records"),
+        "confidence_sensitivity": confidence_sensitivity.to_dict(orient="records"),
+        "student_t_parameter_sensitivity": student_t_sensitivity.to_dict(orient="records"),
+        "lstm_window_sensitivity": lstm_window_sensitivity.to_dict(orient="records"),
+        "tuning_config": tuned_config,
+        "stress_test_analysis": stress_test_table.to_dict(orient="records"),
+        "time_scale_scaling": scaling_table.to_dict(orient="records"),
+        "autocorrelation_summary": autocorr_table.to_dict(orient="records"),
+        "capital_requirements": capital_table.to_dict(orient="records"),
+        "backtest_summary": backtest_summary.to_dict(orient="records"),
+        "figure_paths": {name: str(paths.figures_dir / filename) for name, filename in figure_paths.items()},
+        "table_tex_paths": table_tex_paths,
+        "tables_dir": str(paths.tables_dir),
+    }
+    write_json(paths.results_path, results_payload)
+
+    report_markdown = render_report(
+        data_quality,
+        descriptive_stats,
+        current_var_table,
+        model_tuning_summary,
         backtest_summary,
         confidence_sensitivity,
         student_t_sensitivity,
@@ -1609,24 +2380,9 @@ def run_analysis(refresh_data: bool = False) -> dict[str, str]:
         figure_paths,
         feature_frame,
     )
-    paths.report_path.write_text(report, encoding="utf-8")
-
-    results_payload = {
-        "data_quality": data_quality,
-        "descriptive_statistics": descriptive_stats,
-        "current_var_estimates": current_var_table.to_dict(orient="records"),
-        "confidence_sensitivity": confidence_sensitivity.to_dict(orient="records"),
-        "student_t_parameter_sensitivity": student_t_sensitivity.to_dict(orient="records"),
-        "lstm_window_sensitivity": lstm_window_sensitivity.to_dict(orient="records"),
-        "stress_test_analysis": stress_test_table.to_dict(orient="records"),
-        "time_scale_scaling": scaling_table.to_dict(orient="records"),
-        "autocorrelation_summary": autocorr_table.to_dict(orient="records"),
-        "capital_requirements": capital_table.to_dict(orient="records"),
-        "backtest_summary": backtest_summary.to_dict(orient="records"),
-        "report_path": str(paths.report_path),
-    }
-    write_json(paths.results_path, results_payload)
+    (paths.output_dir / "report.md").write_text(report_markdown, encoding="utf-8")
     return {
-        "report_path": str(paths.report_path),
+        "tables_dir": str(paths.tables_dir),
+        "figures_dir": str(paths.figures_dir),
         "results_path": str(paths.results_path),
     }

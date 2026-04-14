@@ -30,12 +30,12 @@
     {
       "model": "Jump diffusion Monte Carlo",
       "horizon_hours": 1,
-      "VaR_return": -0.014813333606040148,
-      "CVaR_return": -0.027165583015299095,
-      "VaR_loss": 0.014813333606040148,
-      "CVaR_loss": 0.027165583015299095,
-      "mean_return": -0.000234669025589211,
-      "volatility": 0.006533229207722137
+      "VaR_return": -0.016276367362318033,
+      "CVaR_return": -0.02811263999787776,
+      "VaR_loss": 0.016276367362318033,
+      "CVaR_loss": 0.02811263999787776,
+      "mean_return": -0.0002925461248267745,
+      "volatility": 0.006642556772076669
     },
     {
       "model": "LSTM",
@@ -50,68 +50,98 @@
     {
       "model": "Parametric Student-t",
       "horizon_hours": 1,
-      "VaR_return": -0.014663186282569978,
-      "CVaR_return": -0.01922970397992762,
-      "VaR_loss": 0.014663186282569978,
-      "CVaR_loss": 0.01922970397992762,
-      "mean_return": -0.0001337584247651982,
-      "volatility": 0.0055839603058758375
+      "VaR_return": -0.014655860787128144,
+      "CVaR_return": -0.01935075677053368,
+      "VaR_loss": 0.014655860787128144,
+      "CVaR_loss": 0.01935075677053368,
+      "mean_return": -0.00012071510117594093,
+      "volatility": 0.004320894136265074
     },
     {
       "model": "VAE",
       "horizon_hours": 1,
-      "VaR_return": -0.011529107578098774,
-      "CVaR_return": -0.013873346149921417,
-      "VaR_loss": 0.011529107578098774,
-      "CVaR_loss": 0.013873346149921417,
-      "mean_return": -0.00017545795708429068,
-      "volatility": 0.004116002004593611
+      "VaR_return": -0.00962521880865097,
+      "CVaR_return": -0.011537652462720871,
+      "VaR_loss": 0.00962521880865097,
+      "CVaR_loss": 0.011537652462720871,
+      "mean_return": -3.6592035030480474e-05,
+      "volatility": 0.0035763101186603308
     },
     {
       "model": "Jump diffusion Monte Carlo",
       "horizon_hours": 24,
-      "VaR_return": -0.08265217223649313,
-      "CVaR_return": -0.09710138314863803,
-      "VaR_loss": 0.08265217223649313,
-      "CVaR_loss": 0.09710138314863803,
-      "mean_return": -0.004860086698661881,
-      "volatility": 0.031705261680840514
+      "VaR_return": -0.08294643388472527,
+      "CVaR_return": -0.0960060058395518,
+      "VaR_loss": 0.08294643388472527,
+      "CVaR_loss": 0.0960060058395518,
+      "mean_return": -0.00455513882887986,
+      "volatility": 0.0322764285950095
     },
     {
       "model": "Parametric Student-t",
       "horizon_hours": 24,
-      "VaR_return": -0.06749018821879511,
-      "CVaR_return": -0.07915130490782649,
-      "VaR_loss": 0.06749018821879511,
-      "CVaR_loss": 0.07915130490782649,
-      "mean_return": -0.0028593889013540934,
-      "volatility": 0.027178920879150064
+      "VaR_return": -0.06718314705781657,
+      "CVaR_return": -0.07794674778362137,
+      "VaR_loss": 0.06718314705781657,
+      "CVaR_loss": 0.07794674778362137,
+      "mean_return": -0.002891128005597609,
+      "volatility": 0.027185265483155148
     },
     {
       "model": "VAE",
       "horizon_hours": 24,
-      "VaR_return": -0.032055266201496124,
-      "CVaR_return": -0.03714440017938614,
-      "VaR_loss": 0.032055266201496124,
-      "CVaR_loss": 0.03714440017938614,
-      "mean_return": 0.0003513205156195909,
-      "volatility": 0.01297011785209179
+      "VaR_return": -0.03244267776608467,
+      "CVaR_return": -0.03949635103344917,
+      "VaR_loss": 0.03244267776608467,
+      "CVaR_loss": 0.03949635103344917,
+      "mean_return": 0.0007618203526362777,
+      "volatility": 0.013724958524107933
+    }
+  ],
+  "model_tuning_summary": [
+    {
+      "model": "Student-t VaR",
+      "design": "Parametric heavy-tail baseline",
+      "best_parameters": "90-day rolling window; df estimated from sample kurtosis",
+      "selection_metric": "Mean pinball loss",
+      "validation_score": 0.0002992041617655403
+    },
+    {
+      "model": "Jump-diffusion Monte Carlo",
+      "design": "Diffusion plus calibrated jump scenario engine",
+      "best_parameters": "90-day rolling window; jump threshold 2.5 sigma",
+      "selection_metric": "Mean pinball loss",
+      "validation_score": 0.00028115197448858487
+    },
+    {
+      "model": "LSTM conditional VaR",
+      "design": "Feature-conditioned recurrent forecaster with Gaussian head",
+      "best_parameters": "48-hour look-back; 2 layers; 48 hidden units; dropout 0.10",
+      "selection_metric": "Best validation NLL",
+      "validation_score": -4.742692947387695
+    },
+    {
+      "model": "VAE latent VaR",
+      "design": "Latent generative return model on rolling windows",
+      "best_parameters": "24-hour window; latent dimension 8",
+      "selection_metric": "Best validation ELBO",
+      "validation_score": 0.5178287029266357
     }
   ],
   "confidence_sensitivity": [
     {
       "confidence_level_pct": 95.0,
       "model": "Jump diffusion Monte Carlo",
-      "VaR_loss": 0.00981190961574202,
-      "CVaR_loss": 0.01393676159831096,
-      "volatility": 0.006317638732745461
+      "VaR_loss": 0.00969926435706065,
+      "CVaR_loss": 0.01431164280368747,
+      "volatility": 0.00665304219075132
     },
     {
       "confidence_level_pct": 95.0,
       "model": "Parametric Student-t",
-      "VaR_loss": 0.008872787706885139,
-      "CVaR_loss": 0.012620869256694554,
-      "volatility": 0.005591094149779927
+      "VaR_loss": 0.00882614611039857,
+      "CVaR_loss": 0.012605119637590492,
+      "volatility": 0.004320894136265074
     },
     {
       "confidence_level_pct": 95.0,
@@ -123,23 +153,23 @@
     {
       "confidence_level_pct": 95.0,
       "model": "VAE",
-      "VaR_loss": 0.006980550475418568,
-      "CVaR_loss": 0.009700504131615162,
-      "volatility": 0.004116002004593611
+      "VaR_loss": 0.00608670013025403,
+      "CVaR_loss": 0.008176430128514767,
+      "volatility": 0.0035763101186603308
     },
     {
       "confidence_level_pct": 97.5,
       "model": "Jump diffusion Monte Carlo",
-      "VaR_loss": 0.011828691441194314,
-      "CVaR_loss": 0.017092866534745014,
-      "volatility": 0.006340248333615182
+      "VaR_loss": 0.011932911423299906,
+      "CVaR_loss": 0.01788059152380092,
+      "volatility": 0.006474337536333285
     },
     {
       "confidence_level_pct": 97.5,
       "model": "Parametric Student-t",
-      "VaR_loss": 0.011171519539613104,
-      "CVaR_loss": 0.015304810164975922,
-      "volatility": 0.005587886033881705
+      "VaR_loss": 0.011225530663221071,
+      "CVaR_loss": 0.015331804935528574,
+      "volatility": 0.004320894136265074
     },
     {
       "confidence_level_pct": 97.5,
@@ -151,30 +181,23 @@
     {
       "confidence_level_pct": 97.5,
       "model": "VAE",
-      "VaR_loss": 0.008850174024701118,
-      "CVaR_loss": 0.011499691754579544,
-      "volatility": 0.004116002004593611
+      "VaR_loss": 0.007470051757991314,
+      "CVaR_loss": 0.009637271985411644,
+      "volatility": 0.0035763101186603308
     },
     {
       "confidence_level_pct": 99.0,
       "model": "Jump diffusion Monte Carlo",
-      "VaR_loss": 0.015606931862193663,
-      "CVaR_loss": 0.025745514990175702,
-      "volatility": 0.006431783972487691
+      "VaR_loss": 0.015953974156595187,
+      "CVaR_loss": 0.0283844804417109,
+      "volatility": 0.006689903746017487
     },
     {
       "confidence_level_pct": 99.0,
       "model": "Parametric Student-t",
-      "VaR_loss": 0.014772361566942942,
-      "CVaR_loss": 0.019580912701661433,
-      "volatility": 0.005628554935302692
-    },
-    {
-      "confidence_level_pct": 99.0,
-      "model": "VAE",
-      "VaR_loss": 0.011529107578098774,
-      "CVaR_loss": 0.013873346149921417,
-      "volatility": 0.004116002004593611
+      "VaR_loss": 0.014655860787128144,
+      "CVaR_loss": 0.01935075677053368,
+      "volatility": 0.004320894136265074
     },
     {
       "confidence_level_pct": 99.0,
@@ -182,6 +205,13 @@
       "VaR_loss": 0.010786254445739989,
       "CVaR_loss": 0.012487072855963836,
       "volatility": 0.005019142292439938
+    },
+    {
+      "confidence_level_pct": 99.0,
+      "model": "VAE",
+      "VaR_loss": 0.00962521880865097,
+      "CVaR_loss": 0.011537652462720871,
+      "volatility": 0.0035763101186603308
     }
   ],
   "student_t_parameter_sensitivity": [
@@ -231,10 +261,10 @@
   "lstm_window_sensitivity": [
     {
       "lookback_hours": 24,
-      "best_validation_loss": -4.710350036621094,
-      "sigma_tracking_mae": 0.0032733629923313856,
-      "current_VaR_loss": 0.009075156422207945,
-      "current_sigma": 0.004647528287023306
+      "best_validation_loss": -4.749049663543701,
+      "sigma_tracking_mae": 0.0033836709335446358,
+      "current_VaR_loss": 0.011069590181889865,
+      "current_sigma": 0.004887561779469252
     },
     {
       "lookback_hours": 48,
@@ -245,24 +275,32 @@
     },
     {
       "lookback_hours": 72,
-      "best_validation_loss": -4.6586151123046875,
-      "sigma_tracking_mae": 0.004550858400762081,
-      "current_VaR_loss": 0.01640005631904812,
-      "current_sigma": 0.006697364151477814
+      "best_validation_loss": -4.731233596801758,
+      "sigma_tracking_mae": 0.0036824168637394905,
+      "current_VaR_loss": 0.011604282917717557,
+      "current_sigma": 0.005279604345560074
     }
   ],
+  "tuning_config": {
+    "student_t_window_hours": 2160,
+    "jump_diffusion_window_hours": 2160,
+    "jump_threshold_sigma": 2.5,
+    "lstm_sequence_length": 48,
+    "vae_window": 24,
+    "vae_latent_dim": 8
+  },
   "stress_test_analysis": [
     {
       "event": "FTX Collapse",
       "event_timestamp": "2022-11-08T17:00:00+00:00",
       "actual_return": -0.05180172985546072,
       "actual_loss": 0.05180172985546072,
-      "student_t_VaR_loss": 0.014580950479301408,
-      "mc_VaR_loss": 0.015195407513646394,
-      "student_t_peak_warning_loss": 0.014505489926347911,
-      "mc_peak_warning_loss": 0.016132986131213466,
-      "student_t_peak_warning_hours_before_event": 8.0,
-      "mc_peak_warning_hours_before_event": 22.0,
+      "student_t_VaR_loss": 0.014501246470957158,
+      "mc_VaR_loss": 0.016269746678379236,
+      "student_t_peak_warning_loss": 0.014429875771756388,
+      "mc_peak_warning_loss": 0.017057069046998944,
+      "student_t_peak_warning_hours_before_event": 5.0,
+      "mc_peak_warning_hours_before_event": 23.0,
       "strongest_warning_model": "Jump diffusion Monte Carlo",
       "closest_model_to_realized_loss": "Jump diffusion Monte Carlo"
     },
@@ -271,12 +309,12 @@
       "event_timestamp": "2024-01-11T15:00:00+00:00",
       "actual_return": -0.03749461277415023,
       "actual_loss": 0.03749461277415023,
-      "student_t_VaR_loss": 0.012276493220105055,
-      "mc_VaR_loss": 0.012349427327636319,
-      "student_t_peak_warning_loss": 0.012361754831148496,
-      "mc_peak_warning_loss": 0.012398149474391426,
-      "student_t_peak_warning_hours_before_event": 11.0,
-      "mc_peak_warning_hours_before_event": 3.0,
+      "student_t_VaR_loss": 0.012295461831099551,
+      "mc_VaR_loss": 0.012860535066992198,
+      "student_t_peak_warning_loss": 0.012226983260954387,
+      "mc_peak_warning_loss": 0.014034063653775623,
+      "student_t_peak_warning_hours_before_event": 2.0,
+      "mc_peak_warning_hours_before_event": 23.0,
       "strongest_warning_model": "Jump diffusion Monte Carlo",
       "closest_model_to_realized_loss": "Jump diffusion Monte Carlo"
     }
@@ -310,22 +348,15 @@
       "position_notional_usd": 1000000,
       "model": "Jump diffusion Monte Carlo",
       "horizon_hours": 1,
-      "VaR_capital_usd": 14813.333606040149,
-      "CVaR_capital_usd": 27165.583015299097
+      "VaR_capital_usd": 16276.367362318033,
+      "CVaR_capital_usd": 28112.639997877763
     },
     {
       "position_notional_usd": 1000000,
       "model": "Parametric Student-t",
       "horizon_hours": 1,
-      "VaR_capital_usd": 14663.186282569977,
-      "CVaR_capital_usd": 19229.703979927617
-    },
-    {
-      "position_notional_usd": 1000000,
-      "model": "VAE",
-      "horizon_hours": 1,
-      "VaR_capital_usd": 11529.107578098774,
-      "CVaR_capital_usd": 13873.346149921417
+      "VaR_capital_usd": 14655.860787128144,
+      "CVaR_capital_usd": 19350.75677053368
     },
     {
       "position_notional_usd": 1000000,
@@ -336,24 +367,31 @@
     },
     {
       "position_notional_usd": 1000000,
+      "model": "VAE",
+      "horizon_hours": 1,
+      "VaR_capital_usd": 9625.21880865097,
+      "CVaR_capital_usd": 11537.652462720871
+    },
+    {
+      "position_notional_usd": 1000000,
       "model": "Jump diffusion Monte Carlo",
       "horizon_hours": 24,
-      "VaR_capital_usd": 82652.17223649313,
-      "CVaR_capital_usd": 97101.38314863804
+      "VaR_capital_usd": 82946.43388472527,
+      "CVaR_capital_usd": 96006.0058395518
     },
     {
       "position_notional_usd": 1000000,
       "model": "Parametric Student-t",
       "horizon_hours": 24,
-      "VaR_capital_usd": 67490.18821879511,
-      "CVaR_capital_usd": 79151.30490782649
+      "VaR_capital_usd": 67183.14705781658,
+      "CVaR_capital_usd": 77946.74778362137
     },
     {
       "position_notional_usd": 1000000,
       "model": "VAE",
       "horizon_hours": 24,
-      "VaR_capital_usd": 32055.266201496124,
-      "CVaR_capital_usd": 37144.40017938614
+      "VaR_capital_usd": 32442.67776608467,
+      "CVaR_capital_usd": 39496.35103344917
     }
   ],
   "backtest_summary": [
@@ -369,11 +407,11 @@
     {
       "model": "Jump diffusion Monte Carlo",
       "observations": 8761.0,
-      "violations": 128.0,
+      "violations": 110.0,
       "expected_violation_rate": 0.010000000000000009,
-      "observed_violation_rate": 0.014610204314575962,
-      "kupiec_lr": 16.46696967743719,
-      "kupiec_pvalue": 4.9505063523413995e-05
+      "observed_violation_rate": 0.012555644332838718,
+      "kupiec_lr": 5.346596869802738,
+      "kupiec_pvalue": 0.020762757430841328
     },
     {
       "model": "LSTM conditional VaR",
@@ -387,12 +425,38 @@
     {
       "model": "VAE latent VaR",
       "observations": 8761.0,
-      "violations": 138.0,
+      "violations": 204.0,
       "expected_violation_rate": 0.010000000000000009,
-      "observed_violation_rate": 0.01575162652665221,
-      "kupiec_lr": 24.916277189348648,
-      "kupiec_pvalue": 5.987474865909448e-07
+      "observed_violation_rate": 0.02328501312635544,
+      "kupiec_lr": 113.64063250296817,
+      "kupiec_pvalue": 0.0
     }
   ],
-  "report_path": "C:\\Users\\mio.zhu\\Documents\\Market-Risk-Analysis\\outputs\\report.md"
+  "figure_paths": {
+    "price_and_volatility": "C:\\Users\\mio.zhu\\Documents\\Market-Risk-Analysis\\outputs\\figures\\price_and_volatility.png",
+    "return_distribution": "C:\\Users\\mio.zhu\\Documents\\Market-Risk-Analysis\\outputs\\figures\\return_distribution.png",
+    "distribution_diagnostics": "C:\\Users\\mio.zhu\\Documents\\Market-Risk-Analysis\\outputs\\figures\\distribution_diagnostics.png",
+    "monte_carlo_paths": "C:\\Users\\mio.zhu\\Documents\\Market-Risk-Analysis\\outputs\\figures\\monte_carlo_paths.png",
+    "var_backtest": "C:\\Users\\mio.zhu\\Documents\\Market-Risk-Analysis\\outputs\\figures\\var_backtest.png",
+    "lstm_volatility_forecast": "C:\\Users\\mio.zhu\\Documents\\Market-Risk-Analysis\\outputs\\figures\\lstm_volatility_forecast.png",
+    "vae_generated_returns": "C:\\Users\\mio.zhu\\Documents\\Market-Risk-Analysis\\outputs\\figures\\vae_generated_returns.png",
+    "stress_test_warnings": "C:\\Users\\mio.zhu\\Documents\\Market-Risk-Analysis\\outputs\\figures\\stress_test_warnings.png"
+  },
+  "table_tex_paths": {
+    "data_quality": "C:\\Users\\mio.zhu\\Documents\\Market-Risk-Analysis\\outputs\\tables\\data_quality.tex",
+    "descriptive_statistics_main": "C:\\Users\\mio.zhu\\Documents\\Market-Risk-Analysis\\outputs\\tables\\descriptive_statistics_main.tex",
+    "descriptive_statistics_tail": "C:\\Users\\mio.zhu\\Documents\\Market-Risk-Analysis\\outputs\\tables\\descriptive_statistics_tail.tex",
+    "current_var_estimates": "C:\\Users\\mio.zhu\\Documents\\Market-Risk-Analysis\\outputs\\tables\\current_var_estimates.tex",
+    "model_tuning_summary": "C:\\Users\\mio.zhu\\Documents\\Market-Risk-Analysis\\outputs\\tables\\model_tuning_summary.tex",
+    "confidence_sensitivity": "C:\\Users\\mio.zhu\\Documents\\Market-Risk-Analysis\\outputs\\tables\\confidence_sensitivity.tex",
+    "student_t_df_sensitivity": "C:\\Users\\mio.zhu\\Documents\\Market-Risk-Analysis\\outputs\\tables\\student_t_df_sensitivity.tex",
+    "lstm_window_sensitivity": "C:\\Users\\mio.zhu\\Documents\\Market-Risk-Analysis\\outputs\\tables\\lstm_window_sensitivity.tex",
+    "stress_test_overview": "C:\\Users\\mio.zhu\\Documents\\Market-Risk-Analysis\\outputs\\tables\\stress_test_overview.tex",
+    "stress_test_warnings": "C:\\Users\\mio.zhu\\Documents\\Market-Risk-Analysis\\outputs\\tables\\stress_test_warnings.tex",
+    "time_scale_scaling": "C:\\Users\\mio.zhu\\Documents\\Market-Risk-Analysis\\outputs\\tables\\time_scale_scaling.tex",
+    "autocorrelation_summary": "C:\\Users\\mio.zhu\\Documents\\Market-Risk-Analysis\\outputs\\tables\\autocorrelation_summary.tex",
+    "capital_requirements": "C:\\Users\\mio.zhu\\Documents\\Market-Risk-Analysis\\outputs\\tables\\capital_requirements.tex",
+    "kupiec_backtest_summary": "C:\\Users\\mio.zhu\\Documents\\Market-Risk-Analysis\\outputs\\tables\\kupiec_backtest_summary.tex"
+  },
+  "tables_dir": "C:\\Users\\mio.zhu\\Documents\\Market-Risk-Analysis\\outputs\\tables"
 }
