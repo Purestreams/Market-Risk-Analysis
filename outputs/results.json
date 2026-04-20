@@ -5,8 +5,8 @@
     "missing_hours_filled": 14,
     "duplicate_rows_removed": 0,
     "flash_crash_repairs": 0,
-    "start": "2021-01-01T00:00:00+00:00",
-    "end": "2026-04-13T06:00:00+00:00"
+    "start": "2021-01-01 00:00:00 UTC",
+    "end": "2026-04-13 06:00:00 UTC"
   },
   "descriptive_statistics": {
     "observations": 46278.0,
@@ -26,7 +26,82 @@
     "p01": -0.019252113127786432,
     "p99": 0.018603125092989004
   },
+  "sample_split_summary": [
+    {
+      "block": "Full cleaned sample",
+      "start": "2021-01-01 00:00:00 UTC",
+      "end": "2026-04-13 06:00:00 UTC",
+      "observations": 46279,
+      "design_note": "Hourly cleaned candles used for descriptive statistics, figures, and feature construction."
+    },
+    {
+      "block": "Pre-backtest return history",
+      "start": "2021-01-01 01:00:00 UTC",
+      "end": "2025-04-13 05:00:00 UTC",
+      "observations": 37517,
+      "design_note": "History available for model estimation before the final one-year holdout."
+    },
+    {
+      "block": "Tuning validation slice",
+      "start": "2025-03-14 06:00:00 UTC",
+      "end": "2025-04-13 00:00:00 UTC",
+      "observations": 120,
+      "design_note": "Chronological validation checkpoints every 6 hours for Student-t and jump-diffusion tuning."
+    },
+    {
+      "block": "Backtest holdout",
+      "start": "2025-04-13 06:00:00 UTC",
+      "end": "2026-04-13 06:00:00 UTC",
+      "observations": 8761,
+      "design_note": "Final one-year out-of-sample window used for Kupiec coverage testing."
+    },
+    {
+      "block": "LSTM fit sequences",
+      "start": "2021-01-10 00:00:00 UTC",
+      "end": "2024-06-06 09:00:00 UTC",
+      "observations": 29842,
+      "design_note": "Chronological 48-hour feature sequences used for recurrent model fitting."
+    },
+    {
+      "block": "LSTM validation sequences",
+      "start": "2024-06-06 10:00:00 UTC",
+      "end": "2025-04-13 05:00:00 UTC",
+      "observations": 7460,
+      "design_note": "Final 20% of pre-backtest sequence targets reserved for neural validation."
+    },
+    {
+      "block": "LSTM backtest sequences",
+      "start": "2025-04-13 06:00:00 UTC",
+      "end": "2026-04-13 06:00:00 UTC",
+      "observations": 8761,
+      "design_note": "Out-of-sample sequence targets used for the one-step conditional backtest."
+    },
+    {
+      "block": "VAE train windows",
+      "start": "2021-01-01 01:00:00 UTC",
+      "end": "2024-06-04 19:00:00 UTC",
+      "observations": 29996,
+      "design_note": "Rolling 24-hour windows used to estimate the latent generative model."
+    },
+    {
+      "block": "VAE validation windows",
+      "start": "2024-06-03 21:00:00 UTC",
+      "end": "2025-04-13 05:00:00 UTC",
+      "observations": 7498,
+      "design_note": "Final 20% of pre-backtest rolling windows used for chronological latent-model validation."
+    }
+  ],
   "current_var_estimates": [
+    {
+      "model": "Gaussian benchmark",
+      "horizon_hours": 1,
+      "VaR_return": -0.013094563614480957,
+      "CVaR_return": -0.01498439303005382,
+      "VaR_loss": 0.013094563614480957,
+      "CVaR_loss": 0.01498439303005382,
+      "mean_return": -0.00012071510117594093,
+      "volatility": 0.005576916787930596
+    },
     {
       "model": "Jump diffusion Monte Carlo",
       "horizon_hours": 1,
@@ -66,6 +141,16 @@
       "CVaR_loss": 0.011537652462720871,
       "mean_return": -3.6592035030480474e-05,
       "volatility": 0.0035763101186603308
+    },
+    {
+      "model": "Gaussian benchmark",
+      "horizon_hours": 24,
+      "VaR_return": -0.06645578014374941,
+      "CVaR_return": -0.07571401568186072,
+      "VaR_loss": 0.06645578014374941,
+      "CVaR_loss": 0.07571401568186072,
+      "mean_return": -0.0028971624282225824,
+      "volatility": 0.027321200936782603
     },
     {
       "model": "Jump diffusion Monte Carlo",
@@ -138,6 +223,13 @@
     },
     {
       "confidence_level_pct": 95.0,
+      "model": "Gaussian benchmark",
+      "VaR_loss": 0.009293926907010136,
+      "CVaR_loss": 0.011624292786043556,
+      "volatility": 0.005576916787930596
+    },
+    {
+      "confidence_level_pct": 95.0,
       "model": "Parametric Student-t",
       "VaR_loss": 0.00882614611039857,
       "CVaR_loss": 0.012605119637590492,
@@ -173,6 +265,13 @@
     },
     {
       "confidence_level_pct": 97.5,
+      "model": "Gaussian benchmark",
+      "VaR_loss": 0.011051271150296712,
+      "CVaR_loss": 0.013158446739875027,
+      "volatility": 0.005576916787930596
+    },
+    {
+      "confidence_level_pct": 97.5,
       "model": "LSTM",
       "VaR_loss": 0.008947321570677949,
       "CVaR_loss": 0.010843748309936155,
@@ -198,6 +297,13 @@
       "VaR_loss": 0.014655860787128144,
       "CVaR_loss": 0.01935075677053368,
       "volatility": 0.004320894136265074
+    },
+    {
+      "confidence_level_pct": 99.0,
+      "model": "Gaussian benchmark",
+      "VaR_loss": 0.013094563614480957,
+      "CVaR_loss": 0.01498439303005382,
+      "volatility": 0.005576916787930596
     },
     {
       "confidence_level_pct": 99.0,
@@ -292,7 +398,12 @@
   "stress_test_analysis": [
     {
       "event": "FTX Collapse",
-      "event_timestamp": "2022-11-08T17:00:00+00:00",
+      "event_timestamp": "2022-11-08 17:00:00 UTC",
+      "selection_start": "2022-11-07T00:00:00+00:00",
+      "selection_end": "2022-11-10T23:00:00+00:00",
+      "selection_mode": "loss",
+      "warning_horizon_hours": 24.0,
+      "event_scope": "pre-specified case study",
       "actual_return": -0.05180172985546072,
       "actual_loss": 0.05180172985546072,
       "student_t_VaR_loss": 0.014501246470957158,
@@ -301,12 +412,17 @@
       "mc_peak_warning_loss": 0.017057069046998944,
       "student_t_peak_warning_hours_before_event": 5.0,
       "mc_peak_warning_hours_before_event": 23.0,
-      "strongest_warning_model": "Jump diffusion Monte Carlo",
-      "closest_model_to_realized_loss": "Jump diffusion Monte Carlo"
+      "strongest_warning_model": "Jump-diffusion MC",
+      "closest_model_to_realized_loss": "Jump-diffusion MC"
     },
     {
-      "event": "Spot ETF Approval Whipsaw",
-      "event_timestamp": "2024-01-11T15:00:00+00:00",
+      "event": "ETF whipsaw",
+      "event_timestamp": "2024-01-11 15:00:00 UTC",
+      "selection_start": "2024-01-10T00:00:00+00:00",
+      "selection_end": "2024-01-12T23:00:00+00:00",
+      "selection_mode": "absolute",
+      "warning_horizon_hours": 24.0,
+      "event_scope": "pre-specified case study",
       "actual_return": -0.03749461277415023,
       "actual_loss": 0.03749461277415023,
       "student_t_VaR_loss": 0.012295461831099551,
@@ -315,8 +431,8 @@
       "mc_peak_warning_loss": 0.014034063653775623,
       "student_t_peak_warning_hours_before_event": 2.0,
       "mc_peak_warning_hours_before_event": 23.0,
-      "strongest_warning_model": "Jump diffusion Monte Carlo",
-      "closest_model_to_realized_loss": "Jump diffusion Monte Carlo"
+      "strongest_warning_model": "Jump-diffusion MC",
+      "closest_model_to_realized_loss": "Jump-diffusion MC"
     }
   ],
   "time_scale_scaling": [
@@ -360,6 +476,13 @@
     },
     {
       "position_notional_usd": 1000000,
+      "model": "Gaussian benchmark",
+      "horizon_hours": 1,
+      "VaR_capital_usd": 13094.563614480958,
+      "CVaR_capital_usd": 14984.39303005382
+    },
+    {
+      "position_notional_usd": 1000000,
       "model": "LSTM",
       "horizon_hours": 1,
       "VaR_capital_usd": 10786.254445739989,
@@ -388,6 +511,13 @@
     },
     {
       "position_notional_usd": 1000000,
+      "model": "Gaussian benchmark",
+      "horizon_hours": 24,
+      "VaR_capital_usd": 66455.7801437494,
+      "CVaR_capital_usd": 75714.01568186072
+    },
+    {
+      "position_notional_usd": 1000000,
       "model": "VAE",
       "horizon_hours": 24,
       "VaR_capital_usd": 32442.67776608467,
@@ -396,13 +526,34 @@
   ],
   "backtest_summary": [
     {
+      "model": "Gaussian benchmark",
+      "observations": 8761.0,
+      "violations": 184.0,
+      "expected_violation_rate": 0.010000000000000009,
+      "observed_violation_rate": 0.021002168702202943,
+      "kupiec_lr": 81.36614640435118,
+      "kupiec_pvalue": 0.0,
+      "christoffersen_lr_ind": 32.890387069625376,
+      "christoffersen_ind_pvalue": 9.750421692267253e-09,
+      "violation_transition_01": 0.019239738805970148,
+      "violation_transition_11": 0.10326086956521739,
+      "christoffersen_lr_cc": 114.25653347397656,
+      "christoffersen_cc_pvalue": 0.0
+    },
+    {
       "model": "Parametric t-VaR",
       "observations": 8761.0,
       "violations": 129.0,
       "expected_violation_rate": 0.010000000000000009,
       "observed_violation_rate": 0.014724346535783587,
       "kupiec_lr": 17.242483282185503,
-      "kupiec_pvalue": 3.289965754627033e-05
+      "kupiec_pvalue": 3.289965754627033e-05,
+      "christoffersen_lr_ind": 14.61366653144114,
+      "christoffersen_ind_pvalue": 0.00013195413153710422,
+      "violation_transition_01": 0.013903371567605145,
+      "violation_transition_11": 0.06976744186046512,
+      "christoffersen_lr_cc": 31.856149813626644,
+      "christoffersen_cc_pvalue": 1.209274682612005e-07
     },
     {
       "model": "Jump diffusion Monte Carlo",
@@ -411,7 +562,13 @@
       "expected_violation_rate": 0.010000000000000009,
       "observed_violation_rate": 0.012555644332838718,
       "kupiec_lr": 5.346596869802738,
-      "kupiec_pvalue": 0.020762757430841328
+      "kupiec_pvalue": 0.020762757430841328,
+      "christoffersen_lr_ind": 12.078451712886817,
+      "christoffersen_ind_pvalue": 0.0005100793954930793,
+      "violation_transition_01": 0.011907514450867051,
+      "violation_transition_11": 0.06363636363636363,
+      "christoffersen_lr_cc": 17.425048582689556,
+      "christoffersen_cc_pvalue": 0.0001645124525314623
     },
     {
       "model": "LSTM conditional VaR",
@@ -420,7 +577,13 @@
       "expected_violation_rate": 0.010000000000000009,
       "observed_violation_rate": 0.0092455199178176,
       "kupiec_lr": 0.5167855040756422,
-      "kupiec_pvalue": 0.47221612481411157
+      "kupiec_pvalue": 0.47221612481411157,
+      "christoffersen_lr_ind": 7.168985778378783,
+      "christoffersen_ind_pvalue": 0.0074174699004911915,
+      "violation_transition_01": 0.008871989860583017,
+      "violation_transition_11": 0.04938271604938271,
+      "christoffersen_lr_cc": 7.685771282454425,
+      "christoffersen_cc_pvalue": 0.021431667924719067
     },
     {
       "model": "VAE latent VaR",
@@ -429,7 +592,13 @@
       "expected_violation_rate": 0.010000000000000009,
       "observed_violation_rate": 0.02328501312635544,
       "kupiec_lr": 113.64063250296817,
-      "kupiec_pvalue": 0.0
+      "kupiec_pvalue": 0.0,
+      "christoffersen_lr_ind": 32.680245980709515,
+      "christoffersen_ind_pvalue": 1.0863569488428482e-08,
+      "violation_transition_01": 0.021388499298737727,
+      "violation_transition_11": 0.10294117647058823,
+      "christoffersen_lr_cc": 146.3208784836777,
+      "christoffersen_cc_pvalue": 0.0
     }
   ],
   "figure_paths": {
@@ -446,6 +615,7 @@
     "data_quality": "C:\\Users\\mio.zhu\\Documents\\Market-Risk-Analysis\\outputs\\tables\\data_quality.tex",
     "descriptive_statistics_main": "C:\\Users\\mio.zhu\\Documents\\Market-Risk-Analysis\\outputs\\tables\\descriptive_statistics_main.tex",
     "descriptive_statistics_tail": "C:\\Users\\mio.zhu\\Documents\\Market-Risk-Analysis\\outputs\\tables\\descriptive_statistics_tail.tex",
+    "sample_split_summary": "C:\\Users\\mio.zhu\\Documents\\Market-Risk-Analysis\\outputs\\tables\\sample_split_summary.tex",
     "current_var_estimates": "C:\\Users\\mio.zhu\\Documents\\Market-Risk-Analysis\\outputs\\tables\\current_var_estimates.tex",
     "model_tuning_summary": "C:\\Users\\mio.zhu\\Documents\\Market-Risk-Analysis\\outputs\\tables\\model_tuning_summary.tex",
     "confidence_sensitivity": "C:\\Users\\mio.zhu\\Documents\\Market-Risk-Analysis\\outputs\\tables\\confidence_sensitivity.tex",
@@ -458,5 +628,8 @@
     "capital_requirements": "C:\\Users\\mio.zhu\\Documents\\Market-Risk-Analysis\\outputs\\tables\\capital_requirements.tex",
     "kupiec_backtest_summary": "C:\\Users\\mio.zhu\\Documents\\Market-Risk-Analysis\\outputs\\tables\\kupiec_backtest_summary.tex"
   },
-  "tables_dir": "C:\\Users\\mio.zhu\\Documents\\Market-Risk-Analysis\\outputs\\tables"
+  "tables_dir": "C:\\Users\\mio.zhu\\Documents\\Market-Risk-Analysis\\outputs\\tables",
+  "report_markdown_path": "C:\\Users\\mio.zhu\\Documents\\Market-Risk-Analysis\\outputs\\report.md",
+  "report_tex_path": "C:\\Users\\mio.zhu\\Documents\\Market-Risk-Analysis\\outputs\\report.tex",
+  "report_todo_path": "C:\\Users\\mio.zhu\\Documents\\Market-Risk-Analysis\\outputs\\report_todo.md"
 }

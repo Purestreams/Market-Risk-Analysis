@@ -1,0 +1,10 @@
+block,start,end,observations,design_note
+Full cleaned sample,2021-01-01 00:00:00 UTC,2026-04-13 06:00:00 UTC,46279,"Hourly cleaned candles used for descriptive statistics, figures, and feature construction."
+Pre-backtest return history,2021-01-01 01:00:00 UTC,2025-04-13 05:00:00 UTC,37517,History available for model estimation before the final one-year holdout.
+Tuning validation slice,2025-03-14 06:00:00 UTC,2025-04-13 00:00:00 UTC,120,Chronological validation checkpoints every 6 hours for Student-t and jump-diffusion tuning.
+Backtest holdout,2025-04-13 06:00:00 UTC,2026-04-13 06:00:00 UTC,8761,Final one-year out-of-sample window used for Kupiec coverage testing.
+LSTM fit sequences,2021-01-10 00:00:00 UTC,2024-06-06 09:00:00 UTC,29842,Chronological 48-hour feature sequences used for recurrent model fitting.
+LSTM validation sequences,2024-06-06 10:00:00 UTC,2025-04-13 05:00:00 UTC,7460,Final 20% of pre-backtest sequence targets reserved for neural validation.
+LSTM backtest sequences,2025-04-13 06:00:00 UTC,2026-04-13 06:00:00 UTC,8761,Out-of-sample sequence targets used for the one-step conditional backtest.
+VAE train windows,2021-01-01 01:00:00 UTC,2024-06-04 19:00:00 UTC,29996,Rolling 24-hour windows used to estimate the latent generative model.
+VAE validation windows,2024-06-03 21:00:00 UTC,2025-04-13 05:00:00 UTC,7498,Final 20% of pre-backtest rolling windows used for chronological latent-model validation.

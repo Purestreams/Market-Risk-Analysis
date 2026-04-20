@@ -300,6 +300,27 @@ def normal_forecast_from_params(
     )
 
 
+def gaussian_forecast_from_sample(
+    sample: np.ndarray,
+    confidence: float,
+    horizon_hours: int = 1,
+    metadata: dict[str, Any] | None = None,
+) -> ForecastSummary:
+    mean_return = float(sample.mean()) * horizon_hours
+    sigma = float(sample.std(ddof=1)) * math.sqrt(horizon_hours)
+    return normal_forecast_from_params(
+        mean_return,
+        sigma,
+        confidence,
+        horizon_hours=horizon_hours,
+        metadata=metadata
+        or {
+            "distribution": "Gaussian",
+            "estimation_window_observations": float(len(sample)),
+        },
+    )
+
+
 def quantile_loss(actual_returns: np.ndarray, forecast_returns: np.ndarray, confidence: float) -> float:
     alpha = 1 - confidence
     differences = actual_returns - forecast_returns
@@ -379,6 +400,29 @@ def fit_student_t_var(
                 "degrees_of_freedom": float(degrees_of_freedom),
                 "location": float(loc),
                 "scale": float(scale),
+            },
+        )
+    return results
+
+
+def fit_gaussian_var(
+    returns: pd.Series,
+    confidence: float,
+    horizons: tuple[int, ...],
+) -> dict[int, ForecastSummary]:
+    sample = returns.dropna().to_numpy(dtype=np.float64)
+    if sample.size < 2:
+        raise RuntimeError("Not enough observations to fit the Gaussian benchmark.")
+    results: dict[int, ForecastSummary] = {}
+    for horizon in horizons:
+        results[horizon] = gaussian_forecast_from_sample(
+            sample,
+            confidence,
+            horizon_hours=horizon,
+            metadata={
+                "model": "Gaussian benchmark",
+                "distribution": "Gaussian",
+                "estimation_window_observations": float(sample.size),
             },
         )
     return results
@@ -545,8 +589,10 @@ def build_lstm_datasets(
         "scaler": scaler,
         "X_train": transform(sequences_array[fit_indices]),
         "y_train": targets_array[fit_indices],
+        "train_index": pd.Index(target_index_array[fit_indices]),
         "X_val": transform(sequences_array[validation_indices]),
         "y_val": targets_array[validation_indices],
+        "val_index": pd.Index(target_index_array[validation_indices]),
         "X_test": transform(sequences_array[test_mask]),
         "y_test": targets_array[test_mask],
         "test_index": pd.Index(target_index_array[test_mask]),
@@ -794,6 +840,15 @@ def fit_vae_model(
         "generated_returns_1h": generated_returns_1h,
         "training_history": history,
         "runtime_note": decoder_plan.note,
+        "split_summary": {
+            "window_hours": window,
+            "train_window_count": len(train_windows),
+            "validation_window_count": len(val_windows),
+            "train_start": train_series.index[0],
+            "train_end": train_series.index[len(train_windows) + window - 2],
+            "validation_start": train_series.index[len(train_windows)],
+            "validation_end": train_series.index[-1],
+        },
     }
 
 
@@ -1010,12 +1065,67 @@ def kupiec_pof_test(actual_returns: pd.Series, var_series: pd.Series, confidence
     }
 
 
+def christoffersen_independence_test(actual_returns: pd.Series, var_series: pd.Series) -> dict[str, float]:
+    aligned = pd.concat([actual_returns.rename("actual"), var_series.rename("var")], axis=1).dropna()
+    violations = (aligned["actual"] < aligned["var"]).astype(int).to_numpy(dtype=int)
+    if violations.size < 2:
+        return {
+            "christoffersen_lr_ind": float("nan"),
+            "christoffersen_ind_pvalue": float("nan"),
+            "violation_transition_01": float("nan"),
+            "violation_transition_11": float("nan"),
+        }
+
+    prev = violations[:-1]
+    curr = violations[1:]
+    n00 = int(((prev == 0) & (curr == 0)).sum())
+    n01 = int(((prev == 0) & (curr == 1)).sum())
+    n10 = int(((prev == 1) & (curr == 0)).sum())
+    n11 = int(((prev == 1) & (curr == 1)).sum())
+    total_transitions = n00 + n01 + n10 + n11
+
+    pi = float(np.clip((n01 + n11) / total_transitions, 1e-6, 1 - 1e-6))
+    pi01 = float(np.clip(n01 / max(n00 + n01, 1), 1e-6, 1 - 1e-6))
+    pi11 = float(np.clip(n11 / max(n10 + n11, 1), 1e-6, 1 - 1e-6))
+
+    log_l0 = (n00 + n10) * math.log(1 - pi) + (n01 + n11) * math.log(pi)
+    log_l1 = (
+        n00 * math.log(1 - pi01)
+        + n01 * math.log(pi01)
+        + n10 * math.log(1 - pi11)
+        + n11 * math.log(pi11)
+    )
+    lr_ind = float(-2 * (log_l0 - log_l1))
+    ind_pvalue = float(1 - stats.chi2.cdf(lr_ind, df=1))
+    return {
+        "christoffersen_lr_ind": lr_ind,
+        "christoffersen_ind_pvalue": ind_pvalue,
+        "violation_transition_01": pi01,
+        "violation_transition_11": pi11,
+    }
+
+
+def backtest_diagnostics(actual_returns: pd.Series, var_series: pd.Series, confidence: float) -> dict[str, float]:
+    kupiec = kupiec_pof_test(actual_returns, var_series, confidence)
+    independence = christoffersen_independence_test(actual_returns, var_series)
+    lr_ind = independence.get("christoffersen_lr_ind", float("nan"))
+    lr_cc = float(kupiec["kupiec_lr"] + lr_ind) if np.isfinite(lr_ind) else float("nan")
+    cc_pvalue = float(1 - stats.chi2.cdf(lr_cc, df=2)) if np.isfinite(lr_cc) else float("nan")
+    return {
+        **kupiec,
+        **independence,
+        "christoffersen_lr_cc": lr_cc,
+        "christoffersen_cc_pvalue": cc_pvalue,
+    }
+
+
 def run_backtests(
     feature_frame: pd.DataFrame,
     confidence: float,
     lstm_predictions: pd.DataFrame,
     vae_var_return: float,
     rng_seed: int,
+    gaussian_window_hours: int,
     student_t_window_hours: int,
     jump_diffusion_window_hours: int,
     jump_threshold_sigma: float,
@@ -1023,6 +1133,7 @@ def run_backtests(
     returns = feature_frame.set_index("timestamp")["log_return"].dropna()
     backtest_start = returns.index.max() - pd.Timedelta(days=BACKTEST_DAYS)
     actual = returns[returns.index >= backtest_start]
+    var_gaussian = pd.Series(index=actual.index, dtype=float)
     var_t = pd.Series(index=actual.index, dtype=float)
     var_mc = pd.Series(index=actual.index, dtype=float)
 
@@ -1031,11 +1142,17 @@ def run_backtests(
         if len(block_index) == 0:
             continue
         calibration_end = block_index[0] - pd.Timedelta(hours=1)
+        gaussian_calibration_sample = returns.loc[:calibration_end].tail(gaussian_window_hours)
         t_calibration_sample = returns.loc[:calibration_end].tail(student_t_window_hours)
         mc_calibration_sample = returns.loc[:calibration_end].tail(jump_diffusion_window_hours)
-        if len(t_calibration_sample) < student_t_window_hours or len(mc_calibration_sample) < jump_diffusion_window_hours:
+        if (
+            len(gaussian_calibration_sample) < gaussian_window_hours
+            or len(t_calibration_sample) < student_t_window_hours
+            or len(mc_calibration_sample) < jump_diffusion_window_hours
+        ):
             continue
         block_rng = np.random.default_rng(rng_seed + block_start)
+        gaussian_summary = fit_gaussian_var(gaussian_calibration_sample, confidence, (1,))[1]
         t_summary = fit_student_t_var(t_calibration_sample, confidence, (1,), block_rng)[1]
         mc_summary = simulate_jump_diffusion_var(
             mc_calibration_sample,
@@ -1045,6 +1162,7 @@ def run_backtests(
             block_rng,
             jump_threshold_sigma=jump_threshold_sigma,
         )[0][1]
+        var_gaussian.loc[block_index] = gaussian_summary.var_return
         var_t.loc[block_index] = t_summary.var_return
         var_mc.loc[block_index] = mc_summary.var_return
 
@@ -1053,6 +1171,7 @@ def run_backtests(
     backtest_frame = pd.DataFrame(
         {
             "actual_return": actual,
+            "var_gaussian": var_gaussian,
             "var_t": var_t,
             "var_mc": var_mc,
             "var_lstm": var_lstm,
@@ -1061,10 +1180,11 @@ def run_backtests(
     )
     summary = pd.DataFrame(
         [
-            {"model": "Parametric t-VaR", **kupiec_pof_test(actual, var_t, confidence)},
-            {"model": "Jump diffusion Monte Carlo", **kupiec_pof_test(actual, var_mc, confidence)},
-            {"model": "LSTM conditional VaR", **kupiec_pof_test(actual, var_lstm, confidence)},
-            {"model": "VAE latent VaR", **kupiec_pof_test(actual, var_vae, confidence)},
+            {"model": "Gaussian benchmark", **backtest_diagnostics(actual, var_gaussian, confidence)},
+            {"model": "Parametric t-VaR", **backtest_diagnostics(actual, var_t, confidence)},
+            {"model": "Jump diffusion Monte Carlo", **backtest_diagnostics(actual, var_mc, confidence)},
+            {"model": "LSTM conditional VaR", **backtest_diagnostics(actual, var_lstm, confidence)},
+            {"model": "VAE latent VaR", **backtest_diagnostics(actual, var_vae, confidence)},
         ]
     )
     return summary, backtest_frame
@@ -1081,6 +1201,7 @@ def compute_confidence_sensitivity(
     rows: list[dict[str, float | str]] = []
     for offset, confidence in enumerate(confidence_levels):
         rng = np.random.default_rng(RANDOM_SEED + 100 + offset)
+        gaussian_forecast = fit_gaussian_var(student_t_sample, confidence, (1,))[1]
         t_forecast = fit_student_t_var(student_t_sample, confidence, (1,), rng)[1]
         mc_forecast = simulate_jump_diffusion_var(
             jump_diffusion_sample,
@@ -1104,6 +1225,7 @@ def compute_confidence_sensitivity(
             metadata={"model": "VAE latent sampling"},
         )
         for model_name, forecast in (
+            ("Gaussian benchmark", gaussian_forecast),
             ("Parametric Student-t", t_forecast),
             ("Jump diffusion Monte Carlo", mc_forecast),
             ("LSTM", lstm_forecast),
@@ -1237,12 +1359,28 @@ def compute_stress_test_analysis(
 ) -> tuple[pd.DataFrame, dict[str, pd.DataFrame]]:
     returns = feature_frame.set_index("timestamp")["log_return"].dropna()
     event_specs = [
-        ("FTX Collapse", "2022-11-07T00:00:00+00:00", "2022-11-10T23:00:00+00:00", "loss"),
-        ("Spot ETF Approval Whipsaw", "2024-01-10T00:00:00+00:00", "2024-01-12T23:00:00+00:00", "absolute"),
+        {
+            "event": "FTX Collapse",
+            "selection_start": "2022-11-07T00:00:00+00:00",
+            "selection_end": "2022-11-10T23:00:00+00:00",
+            "selection_mode": "loss",
+            "scope": "pre-specified case study",
+        },
+        {
+            "event": "Spot ETF Approval Whipsaw",
+            "selection_start": "2024-01-10T00:00:00+00:00",
+            "selection_end": "2024-01-12T23:00:00+00:00",
+            "selection_mode": "absolute",
+            "scope": "pre-specified case study",
+        },
     ]
     summary_rows: list[dict[str, Any]] = []
     warning_frames: dict[str, pd.DataFrame] = {}
-    for index, (event_name, start, end, mode) in enumerate(event_specs):
+    for index, event_spec in enumerate(event_specs):
+        event_name = str(event_spec["event"])
+        start = str(event_spec["selection_start"])
+        end = str(event_spec["selection_end"])
+        mode = str(event_spec["selection_mode"])
         event_timestamp = select_event_timestamp(returns, start, end, mode)
         actual_return = float(returns.loc[event_timestamp])
         actual_loss = float(-actual_return)
@@ -1286,6 +1424,11 @@ def compute_stress_test_analysis(
             {
                 "event": event_name,
                 "event_timestamp": event_timestamp.isoformat(),
+                "selection_start": start,
+                "selection_end": end,
+                "selection_mode": mode,
+                "warning_horizon_hours": 24.0,
+                "event_scope": str(event_spec["scope"]),
                 "actual_return": actual_return,
                 "actual_loss": actual_loss,
                 "student_t_VaR_loss": t_forecast.var_loss,
@@ -1394,6 +1537,7 @@ def format_table_values(frame: pd.DataFrame, precision: int = 4) -> pd.DataFrame
 
 
 REPORT_MODEL_LABELS = {
+    "Gaussian benchmark": "Gaussian VaR",
     "Jump diffusion Monte Carlo": "Jump-diffusion MC",
     "Parametric Student-t": "Student-t param.",
     "Parametric t-VaR": "Student-t VaR",
@@ -1405,19 +1549,205 @@ REPORT_EVENT_LABELS = {
     "Spot ETF Approval Whipsaw": "ETF whipsaw",
 }
 
+ACADEMIC_REFERENCES = (
+    {
+        "key": "jorion2007",
+        "cite": "Jorion, 2007",
+        "text": "Jorion, Philippe. 2007. Value at Risk: The New Benchmark for Managing Financial Risk. 3rd ed. New York: McGraw-Hill.",
+    },
+    {
+        "key": "mcneil2015",
+        "cite": "McNeil, Frey, and Embrechts, 2015",
+        "text": "McNeil, Alexander J., Rudiger Frey, and Paul Embrechts. 2015. Quantitative Risk Management: Concepts, Techniques and Tools. Revised ed. Princeton: Princeton University Press.",
+    },
+    {
+        "key": "kupiec1995",
+        "cite": "Kupiec, 1995",
+        "text": "Kupiec, Paul H. 1995. Techniques for Verifying the Accuracy of Risk Measurement Models. Journal of Derivatives 3(2): 73-84.",
+    },
+    {
+        "key": "christoffersen1998",
+        "cite": "Christoffersen, 1998",
+        "text": "Christoffersen, Peter F. 1998. Evaluating Interval Forecasts. International Economic Review 39(4): 841-862.",
+    },
+    {
+        "key": "merton1976",
+        "cite": "Merton, 1976",
+        "text": "Merton, Robert C. 1976. Option Pricing When Underlying Stock Returns Are Discontinuous. Journal of Financial Economics 3(1-2): 125-144.",
+    },
+    {
+        "key": "engle1982",
+        "cite": "Engle, 1982",
+        "text": "Engle, Robert F. 1982. Autoregressive Conditional Heteroscedasticity with Estimates of the Variance of United Kingdom Inflation. Econometrica 50(4): 987-1007.",
+    },
+    {
+        "key": "hochreiter1997",
+        "cite": "Hochreiter and Schmidhuber, 1997",
+        "text": "Hochreiter, Sepp, and Jurgen Schmidhuber. 1997. Long Short-Term Memory. Neural Computation 9(8): 1735-1780.",
+    },
+    {
+        "key": "kingma2014",
+        "cite": "Kingma and Welling, 2014",
+        "text": "Kingma, Diederik P., and Max Welling. 2014. Auto-Encoding Variational Bayes. 2nd International Conference on Learning Representations.",
+    },
+)
+
+REFERENCE_LOOKUP = {entry["key"]: entry for entry in ACADEMIC_REFERENCES}
+
+METHOD_OVERVIEW_ROWS = [
+    {
+        "Method": "A",
+        "Model": "Gaussian VaR",
+        "Primary role": "Thin-tailed rolling benchmark used to test whether a Gaussian assumption is adequate.",
+        "Main trade-off": "Transparent baseline, but structurally weak under heavy tails and volatility clustering.",
+    },
+    {
+        "Method": "B",
+        "Model": "Student-t VaR",
+        "Primary role": "Parametric heavy-tail benchmark using a rolling return window.",
+        "Main trade-off": "Transparent and fast, but only weakly conditional on current market state.",
+    },
+    {
+        "Method": "C",
+        "Model": "Jump-diffusion Monte Carlo",
+        "Primary role": "Scenario engine that combines continuous diffusion with discrete jump risk.",
+        "Main trade-off": "More realistic under stress, but sensitive to jump-calibration choices.",
+    },
+    {
+        "Method": "D",
+        "Model": "LSTM Gaussian head",
+        "Primary role": "Feature-conditioned one-step forecast of mean and volatility.",
+        "Main trade-off": "Adaptive to regime shifts, but harder to validate and explain.",
+    },
+    {
+        "Method": "E",
+        "Model": "VAE latent sampling",
+        "Primary role": "Generative model for synthetic return scenarios and latent tail structure.",
+        "Main trade-off": "Useful for scenario enrichment, but weaker as a standalone production VaR engine.",
+    },
+]
+
+REPORT_TODO_SECTIONS = (
+    (
+        "Completed in this implementation",
+        (
+            "Reframed the generated report into an academic paper structure with abstract, introduction, methodology, discussion, conclusion, and references.",
+            "Added a computed sample split summary so the report states the chronological train, validation, and backtest design explicitly.",
+            "Generated a synchronized TeX paper and repository TODO artifact from the Python pipeline outputs.",
+            "Expanded the narrative around model failures, stress-test interpretation, and limitations for university-style reporting.",
+        ),
+    ),
+    (
+        "Recommended next extensions",
+        (
+            "Add Christoffersen conditional coverage tests to complement the existing Kupiec coverage test.",
+            "Extend the neural models to direct multi-step forecasting so the 24-hour comparison includes a conditional recurrent benchmark.",
+            "Introduce liquidity-adjusted VaR or slippage-aware stress testing for execution-sensitive capital analysis.",
+            "Replace the proxy benchmark with a fiat BTC/USD series or an explicit basis adjustment workflow.",
+        ),
+    ),
+)
+
+
+def report_label(value: str, mapping: dict[str, str]) -> str:
+    return mapping.get(value, value)
+
+
+def human_join(items: list[str]) -> str:
+    if not items:
+        return ""
+    if len(items) == 1:
+        return items[0]
+    if len(items) == 2:
+        return f"{items[0]} and {items[1]}"
+    return ", ".join(items[:-1]) + f", and {items[-1]}"
+
+
+def latex_escape(value: Any) -> str:
+    replacements = {
+        "\\": r"\textbackslash{}",
+        "&": r"\&",
+        "%": r"\%",
+        "$": r"\$",
+        "#": r"\#",
+        "_": r"\_",
+        "{": r"\{",
+        "}": r"\}",
+        "~": r"\textasciitilde{}",
+        "^": r"\textasciicircum{}",
+    }
+    return "".join(replacements.get(character, character) for character in str(value))
+
+
+def markdown_numbered_list(items: tuple[str, ...] | list[str]) -> str:
+    return "\n".join(f"{index}. {item}" for index, item in enumerate(items, start=1))
+
+
+def academic_citation(*keys: str) -> str:
+    return "(" + "; ".join(REFERENCE_LOOKUP[key]["cite"] for key in keys) + ")"
+
+
+def render_references_markdown() -> str:
+    return markdown_numbered_list([entry["text"] for entry in ACADEMIC_REFERENCES])
+
+
+def render_references_latex() -> str:
+    lines = ["\\begin{enumerate}"]
+    lines.extend(f"\\item {latex_escape(entry['text'])}" for entry in ACADEMIC_REFERENCES)
+    lines.append("\\end{enumerate}")
+    return "\n".join(lines)
+
+
+def render_report_todo_markdown() -> str:
+    sections = ["# Report Upgrade TODO"]
+    for heading, items in REPORT_TODO_SECTIONS:
+        sections.append("")
+        sections.append(f"## {heading}")
+        sections.extend(f"- [x] {item}" if heading == "Completed in this implementation" else f"- [ ] {item}" for item in items)
+    return "\n".join(sections) + "\n"
+
+
+def render_method_overview_markdown() -> str:
+    return to_markdown_table(pd.DataFrame(METHOD_OVERVIEW_ROWS))
+
+
+def render_method_overview_latex() -> str:
+    row_end = r"\\"
+    lines = [
+        "\\begingroup",
+        "\\small",
+        "\\setlength{\\tabcolsep}{4pt}",
+        "\\begin{center}",
+        "\\begin{tabularx}{0.98\\linewidth}{@{}>{\\RaggedRight\\arraybackslash}p{0.10\\linewidth}>{\\RaggedRight\\arraybackslash}p{0.18\\linewidth}>{\\RaggedRight\\arraybackslash}X>{\\RaggedRight\\arraybackslash}X@{}}",
+        "\\toprule",
+        f"Method & Model & Primary role & Main trade-off {row_end}",
+        "\\midrule",
+        f"A & Gaussian VaR & Thin-tailed rolling benchmark used to test whether a Gaussian assumption is adequate. & Transparent baseline, but structurally weak under heavy tails and volatility clustering. {row_end}",
+        f"B & Student-t VaR & Parametric heavy-tail benchmark using a rolling return window. & Transparent and fast, but only weakly conditional on current market state. {row_end}",
+        f"C & Jump-diffusion Monte Carlo & Scenario engine that combines continuous diffusion with discrete jump risk. & More realistic under stress, but sensitive to jump-calibration choices. {row_end}",
+        f"D & LSTM Gaussian head & Feature-conditioned one-step forecast of mean and volatility. & Adaptive to regime shifts, but harder to validate and explain. {row_end}",
+        f"E & VAE latent sampling & Generative model for synthetic return scenarios and latent tail structure. & Useful for scenario enrichment, but weaker as a standalone production VaR engine. {row_end}",
+        "\\bottomrule",
+        "\\end{tabularx}",
+        "\\end{center}",
+        "\\endgroup",
+    ]
+    return "\n".join(lines)
+
 
 def format_report_timestamp(value: Any) -> Any:
-    if not isinstance(value, str):
-        return value
-    try:
-        timestamp = pd.Timestamp(value)
-    except (TypeError, ValueError):
-        return value
+    if isinstance(value, pd.Timestamp):
+        timestamp = value
+    else:
+        try:
+            timestamp = pd.Timestamp(value)
+        except (TypeError, ValueError):
+            return value
     if timestamp.tzinfo is None:
         timestamp = timestamp.tz_localize("UTC")
     else:
         timestamp = timestamp.tz_convert("UTC")
-    return timestamp.strftime("%Y-%m-%d %H:%M UTC")
+    return timestamp.strftime("%Y-%m-%d %H:%M:%S UTC")
 
 
 def format_report_table(frame: pd.DataFrame, rename_columns: dict[str, str] | None = None) -> pd.DataFrame:
@@ -1469,10 +1799,110 @@ def write_latex_table(
     )
 
 
+def build_sample_split_summary(
+    data_quality: dict[str, Any],
+    returns: pd.Series,
+    backtest_start: pd.Timestamp,
+    lstm_datasets: dict[str, Any],
+    vae_split_summary: dict[str, Any],
+) -> pd.DataFrame:
+    rows: list[dict[str, Any]] = []
+
+    def add_row(block: str, start: Any, end: Any, observations: int, design_note: str) -> None:
+        rows.append(
+            {
+                "block": block,
+                "start": pd.Timestamp(start),
+                "end": pd.Timestamp(end),
+                "observations": int(observations),
+                "design_note": design_note,
+            }
+        )
+
+    sample_start = pd.Timestamp(data_quality["start"])
+    sample_end = pd.Timestamp(data_quality["end"])
+    pre_backtest_returns = returns[returns.index < backtest_start]
+    backtest_returns = returns[returns.index >= backtest_start]
+    tuning_end = backtest_start - pd.Timedelta(hours=1)
+    tuning_start = backtest_start - pd.Timedelta(days=TUNING_VALIDATION_DAYS)
+    tuning_index = returns.loc[tuning_start:tuning_end].index[::TUNING_EVAL_STRIDE_HOURS]
+
+    add_row(
+        "Full cleaned sample",
+        sample_start,
+        sample_end,
+        int(data_quality["cleaned_rows"]),
+        "Hourly cleaned candles used for descriptive statistics, figures, and feature construction.",
+    )
+    add_row(
+        "Pre-backtest return history",
+        pre_backtest_returns.index.min(),
+        pre_backtest_returns.index.max(),
+        len(pre_backtest_returns),
+        "History available for model estimation before the final one-year holdout.",
+    )
+    add_row(
+        "Tuning validation slice",
+        tuning_index.min(),
+        tuning_index.max(),
+        len(tuning_index),
+        f"Chronological validation checkpoints every {TUNING_EVAL_STRIDE_HOURS} hours for Student-t and jump-diffusion tuning.",
+    )
+    add_row(
+        "Backtest holdout",
+        backtest_returns.index.min(),
+        backtest_returns.index.max(),
+        len(backtest_returns),
+        "Final one-year out-of-sample window used for Kupiec coverage testing.",
+    )
+
+    train_index = pd.DatetimeIndex(lstm_datasets["train_index"])
+    val_index = pd.DatetimeIndex(lstm_datasets["val_index"])
+    test_index = pd.DatetimeIndex(lstm_datasets["test_index"])
+    lookback_hours = int(lstm_datasets["X_train"].shape[1])
+    add_row(
+        "LSTM fit sequences",
+        train_index.min(),
+        train_index.max(),
+        len(train_index),
+        f"Chronological {lookback_hours}-hour feature sequences used for recurrent model fitting.",
+    )
+    add_row(
+        "LSTM validation sequences",
+        val_index.min(),
+        val_index.max(),
+        len(val_index),
+        "Final 20% of pre-backtest sequence targets reserved for neural validation.",
+    )
+    add_row(
+        "LSTM backtest sequences",
+        test_index.min(),
+        test_index.max(),
+        len(test_index),
+        "Out-of-sample sequence targets used for the one-step conditional backtest.",
+    )
+    add_row(
+        "VAE train windows",
+        vae_split_summary["train_start"],
+        vae_split_summary["train_end"],
+        int(vae_split_summary["train_window_count"]),
+        f"Rolling {int(vae_split_summary['window_hours'])}-hour windows used to estimate the latent generative model.",
+    )
+    add_row(
+        "VAE validation windows",
+        vae_split_summary["validation_start"],
+        vae_split_summary["validation_end"],
+        int(vae_split_summary["validation_window_count"]),
+        "Final 20% of pre-backtest rolling windows used for chronological latent-model validation.",
+    )
+    return pd.DataFrame(rows)
+
+
 def export_analysis_tables(
     paths: ProjectPaths,
     data_quality: dict[str, Any],
     descriptive_stats: dict[str, float],
+    sample_split_summary: pd.DataFrame,
     current_var_table: pd.DataFrame,
     model_tuning_summary: pd.DataFrame,
     backtest_summary: pd.DataFrame,
@@ -1519,6 +1949,17 @@ def export_analysis_tables(
     )
     descriptive_main = descriptive_frame[["Obs.", "Mean", "Std.", "Skew", "Kurtosis", "JB stat", "JB p-val", "ADF stat"]]
     descriptive_tail = descriptive_frame[["ADF p-val", "ADF 1% crit", "ADF 5% crit", "ADF 10% crit", "Min", "Max", "P1", "P99"]]
+    split_display = format_report_table(
+        sample_split_summary.rename(
+            columns={
+                "block": "Block",
+                "start": "Start",
+                "end": "End",
+                "observations": "Observations",
+                "design_note": "Design note",
+            }
+        )
+    )
     current_var_display = format_report_table(
         current_var_table.rename(
             columns={
@@ -1644,15 +2085,27 @@ def export_analysis_tables(
         )
     )
     backtest_display = format_report_table(
-        backtest_summary.rename(
+        backtest_summary[
+            [
+                "model",
+                "observations",
+                "violations",
+                "expected_violation_rate",
+                "observed_violation_rate",
+                "kupiec_pvalue",
+                "christoffersen_ind_pvalue",
+                "christoffersen_cc_pvalue",
+            ]
+        ].rename(
             columns={
                 "model": "Model",
                 "observations": "Obs.",
                 "violations": "Viol.",
                 "expected_violation_rate": "Exp. fail rate",
                 "observed_violation_rate": "Obs. fail rate",
-                "kupiec_lr": "LR_POF",
-                "kupiec_pvalue": "p-value",
+                "kupiec_pvalue": "POF p-value",
+                "christoffersen_ind_pvalue": "IND p-value",
+                "christoffersen_cc_pvalue": "CC p-value",
             }
         )
     )
@@ -1668,6 +2121,14 @@ def export_analysis_tables(
         ),
         ("descriptive_statistics_main.tex", descriptive_main, 4, "@{}llllllll@{}", "footnotesize", "3pt"),
         ("descriptive_statistics_tail.tex", descriptive_tail, 4, "@{}llllllll@{}", "footnotesize", "3pt"),
+        (
+            "sample_split_summary.tex",
+            split_display,
+            0,
+            "@{}>{\\RaggedRight\\arraybackslash}p{0.17\\linewidth}>{\\RaggedRight\\arraybackslash}p{0.13\\linewidth}>{\\RaggedRight\\arraybackslash}p{0.13\\linewidth}>{\\RaggedLeft\\arraybackslash}p{0.10\\linewidth}>{\\RaggedRight\\arraybackslash}p{0.39\\linewidth}@{}",
+            "scriptsize",
+            "2pt",
+        ),
         (
             "current_var_estimates.tex",
             current_var_display,
@@ -1710,8 +2171,8 @@ def export_analysis_tables(
             "kupiec_backtest_summary.tex",
             backtest_display,
             4,
-            "@{}>{\\RaggedRight\\arraybackslash}p{0.19\\linewidth}*{6}{>{\\RaggedLeft\\arraybackslash}p{0.10\\linewidth}}@{}",
-            "footnotesize",
+            "@{}>{\\RaggedRight\\arraybackslash}p{0.18\\linewidth}*{7}{>{\\RaggedLeft\\arraybackslash}p{0.10\\linewidth}}@{}",
+            "scriptsize",
             "2pt",
         ),
     ]
@@ -1880,6 +2341,7 @@ def save_figures(
 def render_report(
     data_quality: dict[str, Any],
     descriptive_stats: dict[str, float],
+    sample_split_summary: pd.DataFrame,
     current_var_table: pd.DataFrame,
     model_tuning_summary: pd.DataFrame,
     backtest_summary: pd.DataFrame,
@@ -1893,17 +2355,19 @@ def render_report(
     figure_paths: dict[str, str],
     feature_frame: pd.DataFrame,
 ) -> str:
-    returns = feature_frame["log_return"].dropna()
-    latest_close = feature_frame["close"].iloc[-1]
-    first_close = feature_frame["close"].iloc[0]
-    cumulative_return = latest_close / first_close - 1
-    best_backtest_row = backtest_summary.sort_values("kupiec_pvalue", ascending=False).iloc[0]
-    day_scaling_row = scaling_table.loc[scaling_table["horizon"] == "1 day"].iloc[0]
-    ten_day_scaling_row = scaling_table.loc[scaling_table["horizon"] == "10 days"].iloc[0]
-    ftx_row = stress_test_table.loc[stress_test_table["event"] == "FTX Collapse"].iloc[0]
-    etf_row = stress_test_table.loc[stress_test_table["event"] == "Spot ETF Approval Whipsaw"].iloc[0]
-    conservative_row = confidence_sensitivity.loc[confidence_sensitivity["confidence_level_pct"] == 99.0].sort_values("VaR_loss", ascending=False).iloc[0]
-    capital_24h = capital_table.loc[capital_table["horizon_hours"] == 24].sort_values("VaR_capital_usd", ascending=False)
+    sections = build_report_sections(
+        data_quality,
+        descriptive_stats,
+        sample_split_summary,
+        current_var_table,
+        model_tuning_summary,
+        backtest_summary,
+        confidence_sensitivity,
+        stress_test_table,
+        scaling_table,
+        capital_table,
+        feature_frame,
+    )
     data_quality_display = format_report_table(
         pd.DataFrame([data_quality]),
         {
@@ -1914,6 +2378,16 @@ def render_report(
             "flash_crash_repairs": "flash_crash_repairs",
             "start": "start",
             "end": "end",
+        },
+    )
+    split_display = format_report_table(
+        sample_split_summary,
+        {
+            "block": "block",
+            "start": "start",
+            "end": "end",
+            "observations": "observations",
+            "design_note": "design_note",
         },
     )
     current_var_display = format_report_table(
@@ -1942,73 +2416,33 @@ def render_report(
     confidence_display = format_report_table(confidence_sensitivity)
     stress_display = format_report_table(stress_test_table)
     capital_display = format_report_table(capital_table)
-    backtest_display = format_report_table(backtest_summary)
-
-    introduction = (
-        "Bitcoin remains one of the most volatile liquid assets in global markets, which makes it a strong stress case for market risk methodology. "
-        "This study builds a five-year hourly risk engine from January 2021 through the current date using BTC/USDT spot data from Binance as a USD proxy. "
-        "The design goal is not only to report a single Value at Risk number, but to show why a heavy-tailed, simulation-based, and neural-network-enhanced workflow is justified for crypto assets whose distributions are non-Gaussian, clustered in volatility, and punctuated by jumps."
+    backtest_display = format_report_table(
+        backtest_summary[
+            [
+                "model",
+                "observations",
+                "violations",
+                "expected_violation_rate",
+                "observed_violation_rate",
+                "kupiec_pvalue",
+                "christoffersen_ind_pvalue",
+                "christoffersen_cc_pvalue",
+            ]
+        ]
     )
+    return fr"""# Bitcoin Market Risk Analysis: Comparative Value-at-Risk Evidence from Hourly Data
 
-    methodology = (
-        "The pipeline begins with market data engineering. Hourly candles are fetched directly from the exchange API, then reindexed to a continuous hourly clock to eliminate gaps in the time axis. Missing bars are interpolated conservatively, duplicates are removed, and single-bar flash-crash artefacts are repaired only when the move is immediately reversed and the net two-hour move is small. This preserves genuine market shocks while reducing obvious feed noise. Log returns are then calculated, followed by rolling 24-hour and 168-hour volatility, RSI, MACD, and a rolling volume z-score. These engineered features feed the downstream conditional risk models."
-        "\n\nThe statistical section tests whether simple Gaussian assumptions are defensible. Jarque-Bera quantifies departures from normality, skewness and kurtosis measure asymmetry and tail thickness, and the Augmented Dickey-Fuller test evaluates whether the return series is stationary enough to support modeling. In practice, Bitcoin hourly returns typically fail normality decisively while remaining stationary in mean, which is the exact combination that motivates Student-t VaR, Monte Carlo simulation with jumps, and neural network volatility forecasting."
-        "\n\nFour model families are implemented. Method A is a parametric Student-t VaR, calibrated on a rolling return window selected by validation, to capture excess kurtosis in a compact distributional form. Method B is a 10,000-path jump-diffusion Monte Carlo engine that retains Gaussian diffusion but adds empirically calibrated jump intensity and jump magnitude to reflect crypto discontinuities. Method C is a PyTorch LSTM with a Gaussian output head that predicts next-hour conditional mean and volatility from rolling features and then maps the predictive distribution into VaR and CVaR. Method D is a PyTorch variational autoencoder trained on rolling 24-hour return windows; it learns a latent representation of return dynamics and generates synthetic paths by sampling from latent space."
-        "\n\nThe final model settings are selected on the pre-backtest training history only, so the comparison remains out of sample. Student-t and jump diffusion are tuned on rolling calibration windows, the LSTM uses the best look-back window from the validation sweep, and the VAE uses the best latent size before any backtest or stress episode is evaluated."
-    )
+## Abstract
 
-    results_text = (
-        f"The engineered dataset spans {data_quality['cleaned_rows']:,} hourly observations after cleaning, with {data_quality['missing_hours_filled']} missing hours filled and {data_quality['flash_crash_repairs']} flash-crash artefacts repaired. "
-        f"Over the full sample, Bitcoin produced a cumulative price change of {cumulative_return:.2%}, while hourly returns ranged from {descriptive_stats['min']:.2%} to {descriptive_stats['max']:.2%}. "
-        f"The Jarque-Bera statistic is {descriptive_stats['jarque_bera_stat']:.2f} with p-value {descriptive_stats['jarque_bera_pvalue']:.4g}, which rejects normality by a wide margin. "
-        f"Skewness is {descriptive_stats['skewness']:.3f} and kurtosis is {descriptive_stats['kurtosis']:.3f}, confirming an asymmetric and leptokurtic distribution. "
-        f"At the same time, the ADF statistic of {descriptive_stats['adf_stat']:.3f} with p-value {descriptive_stats['adf_pvalue']:.4g} supports stationarity of hourly returns, so the data are suitable for conditional modeling."
-        "\n\nAcross the tuned forecast set, the one-hour VaR estimates differ meaningfully by methodology. Student-t VaR is parsimonious and directly responsive to heavy tails, but it assumes identically distributed shocks over the calibration window. The Monte Carlo model is more flexible because it can separate diffusion from jumps and also extends naturally to multi-period forecasts. The LSTM reacts to state variables such as recent volatility, RSI, MACD, and abnormal volume, which makes it the most explicitly conditional model in the stack. The VAE is different again: it does not forecast a point volatility path but instead learns a latent manifold of plausible return windows and samples from that manifold to infer risk."
-        "\n\nBacktesting over the last year uses the Kupiec proportion-of-failures framework. A model with reliable tail calibration should produce violation rates close to the nominal tail probability and should not be rejected by the likelihood ratio test. In practice, Bitcoin's regime shifts make unconditional models vulnerable when the market transitions from calm to stressed states. Conditional models such as the LSTM often improve responsiveness, while the jump-diffusion Monte Carlo sits between structural realism and calibration complexity. The VAE is best interpreted here as an exploratory generative benchmark rather than a fully conditional production VaR engine, so its unconditional violation rate is informative about latent-distribution realism rather than full real-time adaptability."
-    )
+{sections['abstract']}
 
-    discussion = (
-        "Two empirical features dominate the analysis. First, volatility clustering is persistent: large returns tend to follow large returns, even if their signs alternate. This is visible in the rolling volatility panel and in the LSTM's ability to track realized absolute returns. Second, Bitcoin's tail behavior is materially heavier than a Gaussian baseline, which means that variance-only risk estimation understates extreme downside moves. The Student-t and VAE approaches both address the tail issue, but from different angles: one via an explicit parametric distribution and the other via a latent generative representation."
-        "\n\nThe model trade-offs are practical. Student-t VaR is transparent, cheap, and easy to explain to risk committees, but it cannot react quickly to changing microstructure conditions unless it is recalibrated frequently. Jump-diffusion Monte Carlo is more realistic for crypto because discontinuities are common around liquidations, macro news, and exchange-specific events, yet it still depends on assumptions about jump frequency and jump size. The LSTM is the most adaptive model in the project because it learns from multiple features, but it also introduces training instability, hyperparameter sensitivity, and a higher operational burden. The VAE contributes a different value: it gives a data-driven synthetic distribution that can surface tail scenarios not captured by a single closed-form family, although in its basic unconditional form it is less naturally aligned with rolling one-step backtesting."
-        f"\n\nFrom a governance perspective, the backtest evidence favors {best_backtest_row['model']} because it produced the highest Kupiec p-value ({best_backtest_row['kupiec_pvalue']:.3f}) and the closest observed exception rate to the 1% target. That does not make the other approaches obsolete; instead it suggests that Bitcoin risk management benefits from a layered process in which jump-aware scenario engines are retained for stress realism while conditional neural volatility models are used as a short-horizon overlay."
-    )
+## Introduction
 
-    conclusion = (
-        "The overall result is that a simple Gaussian VaR framework is not credible for Bitcoin hourly risk. The descriptive statistics reject that assumption, the tail metrics show clear excess kurtosis, and the backtesting exercise demonstrates meaningful differences between unconditional, jump-aware, and conditionally learned models. For practical deployment, the strongest baseline in this project is the jump-diffusion Monte Carlo engine for scenario realism, while the LSTM is the best candidate for a responsive conditional overlay. The VAE is a useful research extension for latent-distribution learning and stress scenario generation. Together, the four methods provide a defensible and extensible market-risk toolkit for a high-volatility digital asset."
-    )
+{sections['introduction']}
 
-    sensitivity_text = (
-        f"The sensitivity analysis shows that risk estimates widen in the expected non-linear manner as confidence increases from 95% to 99%. At the 99% level, the most conservative one-hour model in the current snapshot is {conservative_row['model']} with a VaR loss estimate of {conservative_row['VaR_loss']:.2%}. "
-        "This is important because a model ranking that looks similar at 95% can separate sharply in the far tail, which is where risk capital decisions are made. The Student-t parameter study also confirms that lower degrees of freedom magnify left-tail loss projections materially, while the LSTM look-back study shows that sequence length changes the balance between responsiveness and stability in volatility prediction."
-    )
+## Data
 
-    stress_text = (
-        f"The FTX collapse window centers on {ftx_row['event_timestamp']}, where the realized one-hour loss reached {ftx_row['actual_loss']:.2%}. In that case, {ftx_row['strongest_warning_model']} delivered the larger rolling pre-event warning, and {ftx_row['closest_model_to_realized_loss']} sat closest to the eventual realized loss. "
-        f"The spot ETF approval whipsaw peaks at {etf_row['event_timestamp']} with an absolute one-hour move of {etf_row['actual_loss']:.2%}. In that episode, the jump-diffusion model again produced the stronger pre-event warning profile than the plain Student-t specification, which is consistent with Bitcoin's tendency to gap around event-driven order-flow shocks."
-    )
-
-    scaling_text = (
-        f"The square-root-of-time rule is only partially reliable for Bitcoin. At the 99% confidence level, the scaled one-day VaR is {day_scaling_row['sqrt_time_scaled_VaR']:.2%} versus an empirical one-day VaR of {day_scaling_row['empirical_VaR']:.2%}, while the scaled 10-day VaR is {ten_day_scaling_row['sqrt_time_scaled_VaR']:.2%} against an empirical 10-day VaR of {ten_day_scaling_row['empirical_VaR']:.2%}. "
-        "Because raw hourly returns exhibit weak linear autocorrelation but absolute returns remain serially dependent, variance scales more cleanly than tail risk. In other words, volatility clustering rather than mean predictability is the main reason a naive Basel-style scaling rule can misstate long-horizon Bitcoin risk."
-    )
-
-    limitations = (
-        "The report rests on several assumptions that should be made explicit. First, all results depend on exchange-sourced hourly candles, so maintenance windows, low-liquidity intervals, or transient feed errors can still influence tail estimates even after cleaning. Second, the neural-network components are materially less interpretable than the parametric Student-t model: they improve adaptability, but the latent and recurrent structures make causal attribution harder during model validation. Third, accelerated compute helps with experimentation, yet extreme crypto regimes can change faster than any retraining schedule if governance requires full validation before redeployment. Finally, the VAE is used here as a latent-distribution benchmark rather than a full production calibration engine, so its value is strongest in scenario generation and comparative tail diagnostics rather than standalone regulatory capital determination."
-    )
-
-    practical_text = (
-        "For a hypothetical $1 million BTC spot position, the capital table translates model-implied loss rates into reserve cash buffers. A conservative treasury function should anchor on 24-hour CVaR rather than 1-hour VaR, especially when positions cannot be unwound continuously during stress. In practical terms, institutions seeking robustness against gap risk should lean on the jump-diffusion Monte Carlo estimates, while short-horizon desks and intraday traders should monitor the LSTM conditional volatility forecasts as an adaptive overlay rather than as a replacement for scenario analysis."
-    )
-
-    return fr"""# Bitcoin Market Risk Analysis Roadmap Execution Report
-
-## Executive Summary
-
-{introduction}
-
-## Data Engineering
-
-The dataset was built from hourly Binance BTC/USDT spot candles beginning on {data_quality['start']} and ending on {data_quality['end']}. BTC/USDT is used as a highly liquid USD proxy because it offers uninterrupted hourly depth across the full study horizon. The cleaning process enforces a continuous hourly timestamp index, repairs small data outages, removes duplicates, and flags flash-crash artefacts only when they look like data-feed anomalies rather than genuine market moves.
+{sections['data']}
 
 {to_markdown_table(data_quality_display)}
 
@@ -2016,11 +2450,19 @@ The dataset was built from hourly Binance BTC/USDT spot candles beginning on {da
 
 ## Methodology
 
-{methodology}
+{sections['methodology']}
+
+### Method Overview
+
+{render_method_overview_markdown()}
 
 ### Tuned Model Settings
 
 {to_markdown_table(model_tuning_display)}
+
+### Sample Split Summary
+
+{to_markdown_table(split_display)}
 
 The downside tail metrics used in the report follow the standard left-tail definitions:
 
@@ -2028,15 +2470,17 @@ $$
 CVaR_{{\alpha}} = \frac{{1}}{{1-\alpha}} \int_{{\alpha}}^{{1}} VaR_u \, du
 $$
 
-For unconditional backtesting, the Kupiec proportion-of-failures statistic is:
+For unconditional coverage backtesting, the Kupiec proportion-of-failures statistic is:
 
 $$
 LR_{{POF}} = -2 \ln \left( \frac{{(1-\alpha)^{{T-x}} \alpha^x}}{{(1-\hat{{p}})^{{T-x}} \hat{{p}}^x}} \right), \qquad \hat{{p}} = \frac{{x}}{{T}}
 $$
 
-where $T$ is the number of forecasts, $x$ is the number of VaR violations, and $\hat{{p}}$ is the observed violation rate.
+where $T$ is the number of forecasts, $x$ is the number of VaR violations, and $\hat{{p}}$ is the observed violation rate. The report complements this with Christoffersen-style independence and conditional-coverage diagnostics {academic_citation('kupiec1995', 'christoffersen1998')}.
 
 ## Statistical Diagnostics
+
+{sections['diagnostics']}
 
 {to_markdown_table(pd.DataFrame([descriptive_stats]))}
 
@@ -2046,7 +2490,7 @@ where $T$ is the number of forecasts, $x$ is the number of VaR violations, and $
 
 ## Model Results
 
-{results_text}
+{sections['results']}
 
 {to_markdown_table(current_var_display)}
 
@@ -2054,7 +2498,7 @@ where $T$ is the number of forecasts, $x$ is the number of VaR violations, and $
 
 ## Sensitivity Analysis
 
-{sensitivity_text}
+{sections['sensitivity']}
 
 ### Confidence-Level Comparison
 
@@ -2070,7 +2514,7 @@ where $T$ is the number of forecasts, $x$ is the number of VaR violations, and $
 
 ## Stress Testing
 
-{stress_text}
+{sections['stress']}
 
 {to_markdown_table(stress_display)}
 
@@ -2078,7 +2522,7 @@ where $T$ is the number of forecasts, $x$ is the number of VaR violations, and $
 
 ## Time-Scale Scaling
 
-{scaling_text}
+{sections['scaling']}
 
 {to_markdown_table(scaling_table)}
 
@@ -2086,13 +2530,13 @@ where $T$ is the number of forecasts, $x$ is the number of VaR violations, and $
 
 ## Practical Implications
 
-{practical_text}
+{sections['practical']}
 
 {to_markdown_table(capital_display, precision=2)}
 
 ## Backtesting
 
-The last-year backtest compares realized one-hour returns with model-implied one-hour VaR thresholds. Kupiec's proportion-of-failures test is used to evaluate whether each model's exception rate is statistically consistent with the target left-tail probability of 1%.
+{sections['backtesting']}
 
 {to_markdown_table(backtest_display)}
 
@@ -2102,21 +2546,364 @@ The last-year backtest compares realized one-hour returns with model-implied one
 
 ![VAE generated returns](figures/{figure_paths['vae_generated_returns']})
 
-## Limitations & Assumptions
+## Limitations
 
-{limitations}
+{sections['limitations']}
 
 ## Discussion
 
-{discussion}
+{sections['discussion']}
 
 ## Conclusion
 
-{conclusion}
+{sections['conclusion']}
+
+## References
+
+{render_references_markdown()}
 
 ## Appendix
 
-The volatility-clustering scatter plot and the normal Q-Q panel jointly show why Gaussian scaling is insufficient for Bitcoin. The scatter plot highlights persistence in absolute returns, while the Q-Q plot exposes a far heavier empirical tail than the benchmark normal line. Together with the stress-event case studies and the confidence-level sensitivity tables, these diagnostics justify using multiple complementary risk models instead of a single closed-form distribution.
+{sections['appendix']}
+"""
+
+
+def build_report_sections(
+    data_quality: dict[str, Any],
+    descriptive_stats: dict[str, float],
+    sample_split_summary: pd.DataFrame,
+    current_var_table: pd.DataFrame,
+    model_tuning_summary: pd.DataFrame,
+    backtest_summary: pd.DataFrame,
+    confidence_sensitivity: pd.DataFrame,
+    stress_test_table: pd.DataFrame,
+    scaling_table: pd.DataFrame,
+    capital_table: pd.DataFrame,
+    feature_frame: pd.DataFrame,
+) -> dict[str, str]:
+    report_start = format_report_timestamp(data_quality["start"])
+    report_end = format_report_timestamp(data_quality["end"])
+    latest_close = feature_frame["close"].iloc[-1]
+    first_close = feature_frame["close"].iloc[0]
+    cumulative_return = latest_close / first_close - 1
+    best_backtest_row = backtest_summary.assign(
+        rank_cc_pvalue=backtest_summary["christoffersen_cc_pvalue"].fillna(-1.0)
+    ).sort_values(["rank_cc_pvalue", "kupiec_pvalue"], ascending=[False, False]).iloc[0]
+    day_scaling_row = scaling_table.loc[scaling_table["horizon"] == "1 day"].iloc[0]
+    ten_day_scaling_row = scaling_table.loc[scaling_table["horizon"] == "10 days"].iloc[0]
+    ftx_row = stress_test_table.loc[stress_test_table["event"] == "FTX Collapse"].iloc[0]
+    etf_row = stress_test_table.loc[stress_test_table["event"] == "Spot ETF Approval Whipsaw"].iloc[0]
+    conservative_row = confidence_sensitivity.loc[confidence_sensitivity["confidence_level_pct"] == 99.0].sort_values("VaR_loss", ascending=False).iloc[0]
+    capital_24h = capital_table.loc[capital_table["horizon_hours"] == 24].sort_values("VaR_capital_usd", ascending=False).iloc[0]
+
+    split_rows = sample_split_summary.set_index("block")
+    tuning_row = split_rows.loc["Tuning validation slice"]
+    backtest_row = split_rows.loc["Backtest holdout"]
+    lstm_val_row = split_rows.loc["LSTM validation sequences"]
+    vae_val_row = split_rows.loc["VAE validation windows"]
+    gaussian_row = current_var_table[
+        (current_var_table["model"] == "Gaussian benchmark") & (current_var_table["horizon_hours"] == 1)
+    ].iloc[0]
+    student_t_row = current_var_table[
+        (current_var_table["model"] == "Parametric Student-t") & (current_var_table["horizon_hours"] == 1)
+    ].iloc[0]
+    backtest_by_model = backtest_summary.set_index("model")
+    gaussian_backtest = backtest_by_model.loc["Gaussian benchmark"]
+
+    accepted_models = [
+        report_label(model, REPORT_MODEL_LABELS)
+        for model in backtest_summary.loc[backtest_summary["christoffersen_cc_pvalue"] >= 0.05, "model"].tolist()
+    ]
+    rejected_models = [
+        report_label(model, REPORT_MODEL_LABELS)
+        for model in backtest_summary.loc[backtest_summary["christoffersen_cc_pvalue"] < 0.05, "model"].tolist()
+    ]
+    accepted_text = human_join(accepted_models)
+    rejected_text = human_join(rejected_models)
+    best_model_label = report_label(str(best_backtest_row["model"]), REPORT_MODEL_LABELS)
+    if accepted_models and rejected_models:
+        backtesting_acceptance_sentence = (
+            f"At the 5% significance level, {rejected_text} {'is' if len(rejected_models) == 1 else 'are'} rejected by the conditional-coverage test, whereas {accepted_text} {'is' if len(accepted_models) == 1 else 'are'} not rejected."
+        )
+    elif accepted_models:
+        backtesting_acceptance_sentence = (
+            f"At the 5% significance level, {accepted_text} {'is' if len(accepted_models) == 1 else 'are'} not rejected by the conditional-coverage test."
+        )
+    else:
+        backtesting_acceptance_sentence = (
+            f"At the 5% significance level, {rejected_text} {'is' if len(rejected_models) == 1 else 'are'} rejected by the conditional-coverage test, so no model is retained by that criterion on this holdout window."
+        )
+
+    return {
+        "abstract": (
+            f"This report evaluates whether a Gaussian Value at Risk benchmark is credible for Bitcoin when the asset is observed at hourly frequency from {report_start} to {report_end}. "
+            "The empirical design compares a rolling Gaussian benchmark with four richer model families: a parametric Student-t specification, a jump-diffusion Monte Carlo engine, a feature-conditioned LSTM, and a variational autoencoder used for latent scenario generation. "
+            f"The evidence rejects the Gaussian baseline on both tail shape and backtest diagnostics, supports heavy-tailed and state-dependent modeling, and shows that {best_model_label} provides the strongest one-hour conditional coverage result in the final-year backtest, while jump-diffusion remains the more conservative scenario engine under stress."
+        ),
+        "introduction": (
+            "The central research question is whether a simple Gaussian VaR framework can describe Bitcoin downside risk at an hourly horizon, or whether the data require heavier tails, jump risk, and conditional machine-learning overlays. "
+            f"That question matters academically because Bitcoin combines large volatility clusters, event-driven discontinuities, and rapid regime changes that can break the assumptions behind textbook variance-scaling rules and thin-tailed parametric benchmarks {academic_citation('jorion2007', 'mcneil2015')}. "
+            "The report therefore evaluates model credibility along three dimensions: distributional fit, out-of-sample tail calibration, and stress-period warning quality."
+        ),
+        "data": (
+            f"The dataset contains {data_quality['cleaned_rows']:,} cleaned hourly observations built from Binance BTC/USDT spot candles between {report_start} and {report_end}. "
+            f"Data cleaning filled {data_quality['missing_hours_filled']} missing hours, removed {data_quality['duplicate_rows_removed']} duplicate rows, and repaired {data_quality['flash_crash_repairs']} candidate flash-crash artefacts. "
+            "BTC/USDT is used as a liquid USD proxy, which is operationally convenient for uninterrupted hourly sampling but should still be interpreted as a proxy benchmark rather than a pure fiat BTC/USD series."
+        ),
+        "methodology": (
+            f"The benchmark layer contains two rolling parametric baselines: a Gaussian VaR benchmark and a Student-t VaR benchmark, both estimated on the same recent return window so that the distributional assumption is the main moving part {academic_citation('jorion2007', 'mcneil2015')}. The structural scenario layer adds jump-diffusion Monte Carlo with {MONTE_CARLO_PATHS:,} simulation paths and a tuned jump threshold in a Merton-style discontinuous-return setting {academic_citation('merton1976')}. The neural layer adds a one-step LSTM with a Gaussian output head and a VAE that learns latent return-window structure for synthetic scenario generation {academic_citation('hochreiter1997', 'kingma2014')}. "
+            f"Feature engineering supplies log returns, rolling 24-hour and 168-hour volatility, RSI(14), MACD with signal line, and a rolling volume z-score to the conditional models. Chronological splitting is enforced throughout. The final-year backtest holdout spans {format_report_timestamp(backtest_row['start'])} to {format_report_timestamp(backtest_row['end'])} with {int(backtest_row['observations']):,} hourly observations. Student-t and jump-diffusion hyperparameters are tuned on a {TUNING_VALIDATION_DAYS}-day pre-backtest slice sampled every {TUNING_EVAL_STRIDE_HOURS} hours, which yields {int(tuning_row['observations']):,} validation checkpoints. For the neural models, the final 20% of the pre-backtest sequences or rolling windows are reserved for validation, giving {int(lstm_val_row['observations']):,} LSTM validation sequences and {int(vae_val_row['observations']):,} VAE validation windows. "
+            f"The LSTM is trained with AdamW, learning rate {LSTM_LEARNING_RATE:.4g}, batch size {LSTM_BATCH_SIZE}, and {LSTM_FINAL_EPOCHS} epochs, with the final checkpoint chosen by minimum validation Gaussian negative log-likelihood. The VAE is trained with AdamW, learning rate {VAE_LEARNING_RATE:.4g}, batch size {VAE_BATCH_SIZE}, {VAE_FINAL_EPOCHS} epochs, and a reconstruction-plus-KL loss on rolling {VAE_WINDOW}-hour windows. Validation scores in the tuning table therefore represent mean pinball loss for the parametric models, validation Gaussian NLL for the LSTM, and validation ELBO-style loss for the VAE."
+        ),
+        "diagnostics": (
+            f"The descriptive evidence rejects Gaussianity decisively. The Jarque-Bera statistic reaches {descriptive_stats['jarque_bera_stat']:.2f} with a near-zero p-value, while skewness is {descriptive_stats['skewness']:.3f} and kurtosis is {descriptive_stats['kurtosis']:.3f}. "
+            f"Hourly returns range from {descriptive_stats['min']:.2%} to {descriptive_stats['max']:.2%}, and the ADF statistic of {descriptive_stats['adf_stat']:.3f} rejects a unit root in the return series. Taken together, these diagnostics support heavy-tailed and conditional models rather than a thin-tailed homoskedastic baseline."
+        ),
+        "results": (
+            f"Over the full sample, Bitcoin delivered a cumulative price change of {cumulative_return:.2%}. In the current forecast snapshot, the one-hour VaR rankings differ materially by methodology, with the most conservative 99% estimate coming from {report_label(str(conservative_row['model']), REPORT_MODEL_LABELS)} at {conservative_row['VaR_loss']:.2%}. The Gaussian benchmark currently reports a one-hour VaR loss of {gaussian_row['VaR_loss']:.2%}, versus {student_t_row['VaR_loss']:.2%} for the Student-t benchmark estimated on the same rolling history. "
+            "The Student-t model remains the most interpretable heavy-tail baseline, the jump-diffusion engine provides the most stress-aware structural scenarios, and the LSTM contributes the most explicitly conditional one-step signal. Because the recurrent model is estimated as a one-step conditional forecaster, the 24-hour comparison table includes only models that directly produce multi-period distributions through aggregation or simulation."
+        ),
+        "sensitivity": (
+            f"Sensitivity analysis confirms the expected widening of downside risk as confidence moves from 95% to 99%. At 99%, the largest one-hour VaR loss remains {conservative_row['VaR_loss']:.2%}. "
+            "The Gaussian row in the confidence table provides the thin-tailed benchmark, the Student-t parameter sweep shows that lower degrees of freedom amplify tail losses in a nonlinear way, and the LSTM look-back sweep shows a trade-off between responsiveness and stability."
+        ),
+        "stress": (
+            f"The stress section is designed as a two-window case-study exercise rather than an exhaustive event screen. Two pre-specified event windows are defined in code, and the event timestamp inside each window is selected algorithmically by either the worst one-hour loss or the largest absolute one-hour move; warnings are then evaluated over the preceding {int(ftx_row['warning_horizon_hours'])}-hour horizon. Within that design, the FTX collapse window peaks at {format_report_timestamp(ftx_row['event_timestamp'])} with a realized one-hour loss of {ftx_row['actual_loss']:.2%}, and the ETF whipsaw peaks at {format_report_timestamp(etf_row['event_timestamp'])} with a realized absolute move of {etf_row['actual_loss']:.2%}. In both cases, the jump-diffusion engine issues the strongest warning profile and lands closest to the realized loss. At the same time, every one-hour VaR model understates the realized event loss by a wide margin, so the stress section should be interpreted as a warning-comparison exercise rather than a claim of exact crisis prediction."
+        ),
+        "scaling": (
+            f"The square-root-of-time rule is only partially reliable for Bitcoin. The scaled one-day 99% VaR is {day_scaling_row['sqrt_time_scaled_VaR']:.2%} versus an empirical one-day VaR of {day_scaling_row['empirical_VaR']:.2%}, while the scaled ten-day VaR is {ten_day_scaling_row['sqrt_time_scaled_VaR']:.2%} against an empirical ten-day VaR of {ten_day_scaling_row['empirical_VaR']:.2%}. "
+            "Weak linear autocorrelation in raw returns coexists with persistent autocorrelation in absolute returns, which implies that volatility clustering rather than mean predictability is the main reason naive variance scaling can misstate long-horizon risk."
+        ),
+        "practical": (
+            f"For a hypothetical $1 million BTC spot position, the largest 24-hour VaR capital estimate in the current snapshot is ${capital_24h['VaR_capital_usd']:,.2f}. "
+            "These are market-risk numbers rather than liquidity-adjusted exit costs. For committee reporting, the jump-diffusion estimates are the more conservative baseline, while the LSTM is more appropriate as an intraday surveillance overlay."
+        ),
+        "backtesting": (
+            f"The last-year backtest evaluates {int(backtest_row['observations']):,} one-hour forecasts against a 1% tail target using both Kupiec's unconditional coverage test and Christoffersen's independence and conditional-coverage diagnostics {academic_citation('kupiec1995', 'christoffersen1998')}. {best_model_label} delivers the strongest joint result with a conditional-coverage p-value of {best_backtest_row['christoffersen_cc_pvalue']:.3f}, while the Gaussian benchmark posts a Kupiec p-value of {gaussian_backtest['kupiec_pvalue']:.3f} and a conditional-coverage p-value of {gaussian_backtest['christoffersen_cc_pvalue']:.3f}. "
+            f"{backtesting_acceptance_sentence} That pattern suggests that conditional adaptation improves tail calibration on this holdout window, but it is still evidence about this sample path rather than proof that one specification dominates in every regime."
+        ),
+        "limitations": (
+            "The project has several explicit limitations. The benchmark is a proxy BTC/USDT series rather than a fiat BTC/USD market, the report relies on hourly candles rather than intrahour depth, and the backtesting section still evaluates only one realized holdout year even after adding conditional-coverage diagnostics. The neural models improve adaptability but remain harder to interpret than the parametric baseline, and the validation design is chronological rather than full rolling-origin cross-validation across multiple non-overlapping regimes. Finally, the reported VaR and CVaR numbers are market-risk statistics rather than liquidity-adjusted liquidation losses."
+        ),
+        "discussion": (
+            f"Two empirical themes dominate the evidence. First, Bitcoin exhibits persistent volatility clustering, so state dependence matters even when raw returns themselves are weakly autocorrelated {academic_citation('engle1982')}. Second, the downside tail is too heavy for a Gaussian benchmark to be credible: the Gaussian row understates tail risk relative to the matched Student-t benchmark and is weaker than Student-t VaR on the final-year backtest. Those facts explain why the project benefits from layering models instead of selecting a single winner for every use case."
+        ),
+        "conclusion": (
+            "The main conclusion is that Gaussian hourly VaR is not an adequate benchmark for Bitcoin. Heavy-tailed parametric modeling, jump-aware simulation, and conditional neural forecasting all add economically meaningful information relative to a thin-tailed variance-only baseline. In this project, the jump-diffusion engine is the strongest conservative scenario benchmark, while the LSTM is the strongest one-hour conditional overlay on the final holdout year under the current conditional-coverage diagnostics."
+        ),
+        "appendix": (
+            "The appendix figures support the report's main claims visually. The volatility-clustering scatter plot shows persistence in absolute returns, the normal Q-Q panel shows substantial tail deviation from Gaussian behavior, the backtest figure shows the relative responsiveness of each VaR series, and the generated-return panels illustrate how the neural models differ in purpose from the parametric baselines."
+        ),
+    }
+
+
+def render_report_tex(
+    data_quality: dict[str, Any],
+    descriptive_stats: dict[str, float],
+    sample_split_summary: pd.DataFrame,
+    current_var_table: pd.DataFrame,
+    model_tuning_summary: pd.DataFrame,
+    backtest_summary: pd.DataFrame,
+    confidence_sensitivity: pd.DataFrame,
+    stress_test_table: pd.DataFrame,
+    scaling_table: pd.DataFrame,
+    autocorr_table: pd.DataFrame,
+    capital_table: pd.DataFrame,
+    figure_paths: dict[str, str],
+    feature_frame: pd.DataFrame,
+) -> str:
+    sections = build_report_sections(
+        data_quality,
+        descriptive_stats,
+        sample_split_summary,
+        current_var_table,
+        model_tuning_summary,
+        backtest_summary,
+        confidence_sensitivity,
+        stress_test_table,
+        scaling_table,
+        capital_table,
+        feature_frame,
+    )
+
+    def paragraph(text: str) -> str:
+        return "\n\n".join(latex_escape(part) for part in text.split("\n\n"))
+
+    return f"""% Generated by market_risk_analysis.pipeline.render_report_tex.
+\\setlength{{\\LTleft}}{{\\fill}}
+\\setlength{{\\LTright}}{{\\fill}}
+\\renewcommand{{\\arraystretch}}{{1.05}}
+
+\\subsection{{Abstract}}
+
+{paragraph(sections['abstract'])}
+
+\\subsection{{Introduction}}
+
+{paragraph(sections['introduction'])}
+
+\\subsection{{Data}}
+
+{paragraph(sections['data'])}
+
+\\input{{tables/data_quality.tex}}
+
+\\begin{{figure}}[htbp]
+\\centering
+\\includegraphics{{figures/{figure_paths['price_and_volatility']}}}
+\\caption{{Price and volatility}}
+\\end{{figure}}
+
+\\subsection{{Methodology}}
+
+{paragraph(sections['methodology'])}
+
+\\subsubsection*{{Method Overview}}
+
+{render_method_overview_latex()}
+
+\\subsubsection*{{Tuned Model Settings}}
+
+\\input{{tables/model_tuning_summary.tex}}
+
+\\subsubsection*{{Sample Split Summary}}
+
+\\input{{tables/sample_split_summary.tex}}
+
+The downside tail metrics used in the report follow the standard left-tail definitions:
+
+\\[
+CVaR_{{\\alpha}} = \\frac{{1}}{{1-\\alpha}} \\int_{{\\alpha}}^{{1}} VaR_u \\, du
+\\]
+
+For unconditional coverage backtesting, the Kupiec proportion-of-failures statistic is:
+
+\\[
+LR_{{POF}} = -2 \\ln \\left( \\frac{{(1-\\alpha)^{{T-x}} \\alpha^x}}{{(1-\\hat{{p}})^{{T-x}} \\hat{{p}}^x}} \\right), \\qquad \\hat{{p}} = \\frac{{x}}{{T}}
+\\]
+
+where $T$ is the number of forecasts, $x$ is the number of VaR violations, and $\\hat{{p}}$ is the observed violation rate.
+The report complements this with Christoffersen-style independence and conditional-coverage diagnostics {academic_citation('kupiec1995', 'christoffersen1998')}.
+
+\\subsection{{Statistical Diagnostics}}
+
+{paragraph(sections['diagnostics'])}
+
+\\input{{tables/descriptive_statistics_main.tex}}
+
+\\input{{tables/descriptive_statistics_tail.tex}}
+
+\\begin{{figure}}[htbp]
+\\centering
+\\includegraphics{{figures/{figure_paths['return_distribution']}}}
+\\caption{{Return distribution}}
+\\end{{figure}}
+
+\\begin{{figure}}[htbp]
+\\centering
+\\includegraphics{{figures/{figure_paths['distribution_diagnostics']}}}
+\\caption{{Distribution diagnostics}}
+\\end{{figure}}
+
+\\subsection{{Model Results}}
+
+{paragraph(sections['results'])}
+
+\\input{{tables/current_var_estimates.tex}}
+
+\\begin{{figure}}[htbp]
+\\centering
+\\includegraphics{{figures/{figure_paths['monte_carlo_paths']}}}
+\\caption{{Monte Carlo paths}}
+\\end{{figure}}
+
+\\subsection{{Sensitivity Analysis}}
+
+{paragraph(sections['sensitivity'])}
+
+\\subsubsection*{{Confidence-Level Comparison}}
+
+\\input{{tables/confidence_sensitivity.tex}}
+
+\\subsubsection*{{Student-t Degrees-of-Freedom Impact}}
+
+\\input{{tables/student_t_df_sensitivity.tex}}
+
+\\subsubsection*{{LSTM Look-back Window Impact}}
+
+\\input{{tables/lstm_window_sensitivity.tex}}
+
+\\subsection{{Stress Testing}}
+
+{paragraph(sections['stress'])}
+
+\\input{{tables/stress_test_overview.tex}}
+
+\\input{{tables/stress_test_warnings.tex}}
+
+\\begin{{figure}}[htbp]
+\\centering
+\\includegraphics{{figures/{figure_paths['stress_test_warnings']}}}
+\\caption{{Stress warning profiles}}
+\\end{{figure}}
+
+\\subsection{{Time-Scale Scaling}}
+
+{paragraph(sections['scaling'])}
+
+\\input{{tables/time_scale_scaling.tex}}
+
+\\input{{tables/autocorrelation_summary.tex}}
+
+\\subsection{{Practical Implications}}
+
+{paragraph(sections['practical'])}
+
+\\input{{tables/capital_requirements.tex}}
+
+\\subsection{{Backtesting}}
+
+{paragraph(sections['backtesting'])}
+
+\\input{{tables/kupiec_backtest_summary.tex}}
+
+\\begin{{figure}}[htbp]
+\\centering
+\\includegraphics{{figures/{figure_paths['var_backtest']}}}
+\\caption{{VaR backtest}}
+\\end{{figure}}
+
+\\begin{{figure}}[htbp]
+\\centering
+\\includegraphics{{figures/{figure_paths['lstm_volatility_forecast']}}}
+\\caption{{LSTM volatility forecast}}
+\\end{{figure}}
+
+\\begin{{figure}}[htbp]
+\\centering
+\\includegraphics{{figures/{figure_paths['vae_generated_returns']}}}
+\\caption{{VAE generated returns}}
+\\end{{figure}}
+
+\\subsection{{Limitations}}
+
+{paragraph(sections['limitations'])}
+
+\\subsection{{Discussion}}
+
+{paragraph(sections['discussion'])}
+
+\\subsection{{Conclusion}}
+
+{paragraph(sections['conclusion'])}
+
+\\subsection{{References}}
+
+{render_references_latex()}
+
+\\subsection{{Appendix}}
+
+{paragraph(sections['appendix'])}
 """
 
 
@@ -2125,7 +2912,7 @@ def write_json(path: Path, payload: dict[str, Any]) -> None:
         if isinstance(value, (np.floating, np.integer)):
             return value.item()
         if isinstance(value, pd.Timestamp):
-            return value.isoformat()
+            return format_report_timestamp(value)
         raise TypeError(f"Object of type {type(value)!r} is not JSON serializable")
 
     path.write_text(json.dumps(payload, indent=2, default=serializer), encoding="utf-8")
@@ -2205,7 +2992,9 @@ def run_analysis(refresh_data: bool = False) -> dict[str, str]:
 
     student_t_sample = returns.tail(student_t_window_hours)
     jump_diffusion_sample = returns.tail(jump_diffusion_window_hours)
+    gaussian_sample = student_t_sample
 
+    gaussian_results = fit_gaussian_var(gaussian_sample, DEFAULT_CONFIDENCE, HORIZON_HOURS)
     t_results = fit_student_t_var(student_t_sample, DEFAULT_CONFIDENCE, HORIZON_HOURS, rng)
     mc_results, mc_sample_paths = simulate_jump_diffusion_var(
         jump_diffusion_sample,
@@ -2252,12 +3041,14 @@ def run_analysis(refresh_data: bool = False) -> dict[str, str]:
         vae_result["backtest_var_return"],
         RANDOM_SEED,
         student_t_window_hours,
+        student_t_window_hours,
         jump_diffusion_window_hours,
         jump_threshold_sigma,
     )
 
     current_var_rows = []
     for model_name, forecast_map in (
+        ("Gaussian benchmark", gaussian_results),
         ("Parametric Student-t", t_results),
         ("Jump diffusion Monte Carlo", mc_results),
         ("LSTM", {1: lstm_result["current_forecast"]}),
@@ -2302,15 +3093,30 @@ def run_analysis(refresh_data: bool = False) -> dict[str, str]:
     )
     scaling_table, autocorr_table = compute_time_scale_diagnostics(returns, DEFAULT_CONFIDENCE)
     capital_table = compute_capital_requirements(current_var_table)
+    sample_split_summary = build_sample_split_summary(
+        data_quality,
+        returns,
+        backtest_start,
+        lstm_datasets,
+        vae_result["split_summary"],
+    )
+    export_sample_split_summary = format_report_table(sample_split_summary)
+    export_stress_test_table = format_report_table(stress_test_table)
+    export_data_quality = {
+        **data_quality,
+        "start": format_report_timestamp(data_quality["start"]),
+        "end": format_report_timestamp(data_quality["end"]),
+    }
 
     current_var_table.to_csv(paths.tables_dir / "current_var_estimates.csv", index=False)
     pd.DataFrame([descriptive_stats]).to_csv(paths.tables_dir / "descriptive_statistics.csv", index=False)
+    export_sample_split_summary.to_csv(paths.tables_dir / "sample_split_summary.csv", index=False)
     backtest_summary.to_csv(paths.tables_dir / "kupiec_backtest_summary.csv", index=False)
     confidence_sensitivity.to_csv(paths.tables_dir / "confidence_sensitivity.csv", index=False)
     student_t_sensitivity.to_csv(paths.tables_dir / "student_t_df_sensitivity.csv", index=False)
     lstm_window_sensitivity.to_csv(paths.tables_dir / "lstm_window_sensitivity.csv", index=False)
     model_tuning_summary.to_csv(paths.tables_dir / "model_tuning_summary.csv", index=False)
-    stress_test_table.to_csv(paths.tables_dir / "stress_test_analysis.csv", index=False)
+    export_stress_test_table.to_csv(paths.tables_dir / "stress_test_analysis.csv", index=False)
     scaling_table.to_csv(paths.tables_dir / "time_scale_scaling.csv", index=False)
     autocorr_table.to_csv(paths.tables_dir / "autocorrelation_summary.csv", index=False)
     capital_table.to_csv(paths.tables_dir / "capital_requirements.csv", index=False)
@@ -2332,6 +3138,7 @@ def run_analysis(refresh_data: bool = False) -> dict[str, str]:
         paths,
         data_quality,
         descriptive_stats,
+        sample_split_summary,
         current_var_table,
         model_tuning_summary,
         backtest_summary,
@@ -2345,15 +3152,16 @@ def run_analysis(refresh_data: bool = False) -> dict[str, str]:
     )
 
     results_payload = {
-        "data_quality": data_quality,
+        "data_quality": export_data_quality,
         "descriptive_statistics": descriptive_stats,
+        "sample_split_summary": export_sample_split_summary.to_dict(orient="records"),
         "current_var_estimates": current_var_table.to_dict(orient="records"),
         "model_tuning_summary": model_tuning_summary.to_dict(orient="records"),
         "confidence_sensitivity": confidence_sensitivity.to_dict(orient="records"),
         "student_t_parameter_sensitivity": student_t_sensitivity.to_dict(orient="records"),
         "lstm_window_sensitivity": lstm_window_sensitivity.to_dict(orient="records"),
         "tuning_config": tuned_config,
-        "stress_test_analysis": stress_test_table.to_dict(orient="records"),
+        "stress_test_analysis": export_stress_test_table.to_dict(orient="records"),
         "time_scale_scaling": scaling_table.to_dict(orient="records"),
         "autocorrelation_summary": autocorr_table.to_dict(orient="records"),
         "capital_requirements": capital_table.to_dict(orient="records"),
@@ -2361,12 +3169,16 @@ def run_analysis(refresh_data: bool = False) -> dict[str, str]:
         "figure_paths": {name: str(paths.figures_dir / filename) for name, filename in figure_paths.items()},
         "table_tex_paths": table_tex_paths,
         "tables_dir": str(paths.tables_dir),
+        "report_markdown_path": str(paths.report_markdown_path),
+        "report_tex_path": str(paths.report_tex_path),
+        "report_todo_path": str(paths.report_todo_path),
     }
     write_json(paths.results_path, results_payload)
 
     report_markdown = render_report(
         data_quality,
         descriptive_stats,
+        sample_split_summary,
         current_var_table,
         model_tuning_summary,
         backtest_summary,
@@ -2380,8 +3192,28 @@ def run_analysis(refresh_data: bool = False) -> dict[str, str]:
         figure_paths,
         feature_frame,
     )
-    (paths.output_dir / "report.md").write_text(report_markdown, encoding="utf-8")
+    paths.report_markdown_path.write_text(report_markdown, encoding="utf-8")
+    report_tex = render_report_tex(
+        data_quality,
+        descriptive_stats,
+        sample_split_summary,
+        current_var_table,
+        model_tuning_summary,
+        backtest_summary,
+        confidence_sensitivity,
+        stress_test_table,
+        scaling_table,
+        autocorr_table,
+        capital_table,
+        figure_paths,
+        feature_frame,
+    )
+    paths.report_tex_path.write_text(report_tex, encoding="utf-8")
+    paths.report_todo_path.write_text(render_report_todo_markdown(), encoding="utf-8")
     return {
+        "report_markdown_path": str(paths.report_markdown_path),
+        "report_tex_path": str(paths.report_tex_path),
+        "report_todo_path": str(paths.report_todo_path),
         "tables_dir": str(paths.tables_dir),
         "figures_dir": str(paths.figures_dir),
         "results_path": str(paths.results_path),

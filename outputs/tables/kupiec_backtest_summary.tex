@@ -1,24 +1,25 @@
 \begingroup
-\footnotesize
+\scriptsize
 \setlength{\tabcolsep}{2pt}
-\begin{longtable}{@{}>{\RaggedRight\arraybackslash}p{0.19\linewidth}*{6}{>{\RaggedLeft\arraybackslash}p{0.10\linewidth}}@{}}
+\begin{longtable}{@{}>{\RaggedRight\arraybackslash}p{0.18\linewidth}*{7}{>{\RaggedLeft\arraybackslash}p{0.10\linewidth}}@{}}
 \toprule
-Model & Obs. & Viol. & Exp. fail rate & Obs. fail rate & LR\_POF & p-value \\
+Model & Obs. & Viol. & Exp. fail rate & Obs. fail rate & POF p-value & IND p-value & CC p-value \\
 \midrule
 \endfirsthead
 \toprule
-Model & Obs. & Viol. & Exp. fail rate & Obs. fail rate & LR\_POF & p-value \\
+Model & Obs. & Viol. & Exp. fail rate & Obs. fail rate & POF p-value & IND p-value & CC p-value \\
 \midrule
 \endhead
 \midrule
-\multicolumn{7}{r}{Continued on next page} \\
+\multicolumn{8}{r}{Continued on next page} \\
 \midrule
 \endfoot
 \bottomrule
 \endlastfoot
-Student-t VaR & 8761 & 129 & 0.01 & 0.0147 & 17.2425 & <0.0001 \\
-Jump-diffusion MC & 8761 & 110 & 0.01 & 0.0126 & 5.3466 & 0.0208 \\
-LSTM cond. VaR & 8761 & 81 & 0.01 & 0.0092 & 0.5168 & 0.4722 \\
-VAE latent VaR & 8761 & 204 & 0.01 & 0.0233 & 113.6406 & <0.0001 \\
+Gaussian VaR & 8761 & 184 & 0.01 & 0.021 & <0.0001 & <0.0001 & <0.0001 \\
+Student-t VaR & 8761 & 129 & 0.01 & 0.0147 & <0.0001 & 0.0001 & <0.0001 \\
+Jump-diffusion MC & 8761 & 110 & 0.01 & 0.0126 & 0.0208 & 0.0005 & 0.0002 \\
+LSTM cond. VaR & 8761 & 81 & 0.01 & 0.0092 & 0.4722 & 0.0074 & 0.0214 \\
+VAE latent VaR & 8761 & 204 & 0.01 & 0.0233 & <0.0001 & <0.0001 & <0.0001 \\
 \end{longtable}
 \endgroup

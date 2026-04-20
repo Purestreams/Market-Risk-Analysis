@@ -10,8 +10,7 @@ It covers:
 - 10,000-path jump diffusion Monte Carlo VaR.
 - PyTorch LSTM conditional volatility forecasting.
 - PyTorch VAE latent distribution sampling.
-- Intel Core Ultra NPU integration attempts for compatible AI inference modules.
-- Kupiec POF backtesting and a generated English Markdown report.
+- Kupiec POF backtesting, generated academic report outputs, and synchronized LaTeX paper artifacts.
 
 Run the full pipeline with:
 
@@ -20,6 +19,7 @@ uv run market-risk-analysis --refresh-data
 ```
 
 Generated artifacts are written under `outputs/`.
+The main report outputs are `outputs/report.md`, `outputs/report.tex`, and `outputs/report_todo.md`.
 
 Compile the generated LaTeX report to PDF from Windows via WSL with:
 
