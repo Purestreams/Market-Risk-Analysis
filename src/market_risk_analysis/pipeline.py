@@ -30,11 +30,14 @@ from .config import (
     JUMP_DIFFUSION_WINDOW_CANDIDATES,
     LSTM_BATCH_SIZE,
     LSTM_DROPOUT,
+    LSTM_FINAL_SEQUENCE_LENGTH,
+    LSTM_FINAL_TAIL_ALPHA,
     LSTM_FINAL_EPOCHS,
     LSTM_HIDDEN_DIM,
     LSTM_LEARNING_RATE,
     LSTM_LOOKBACK_CANDIDATES,
     LSTM_NUM_LAYERS,
+    LSTM_TAIL_CALIBRATION_LEVELS,
     LSTM_SEQUENCE_LENGTH,
     LSTM_TUNING_EPOCHS,
     DEFAULT_CONFIDENCE,
@@ -300,6 +303,28 @@ def normal_forecast_from_params(
     )
 
 
+def forecast_from_standardized_tail(
+    mean_return: float,
+    sigma: float,
+    tail_quantile_z: float,
+    tail_cvar_z: float,
+    horizon_hours: int = 1,
+    metadata: dict[str, Any] | None = None,
+) -> ForecastSummary:
+    var_return = mean_return + sigma * tail_quantile_z
+    cvar_return = mean_return + sigma * tail_cvar_z
+    return ForecastSummary(
+        horizon_hours=horizon_hours,
+        var_return=float(var_return),
+        cvar_return=float(cvar_return),
+        var_loss=float(-var_return),
+        cvar_loss=float(-cvar_return),
+        mean_return=float(mean_return),
+        volatility=float(sigma),
+        metadata={} if metadata is None else metadata,
+    )
+
+
 def gaussian_forecast_from_sample(
     sample: np.ndarray,
     confidence: float,
@@ -542,6 +567,112 @@ def gaussian_nll(mean: torch.Tensor, sigma: torch.Tensor, target: torch.Tensor) 
     return torch.mean(torch.log(sigma) + 0.5 * ((target - mean) / sigma) ** 2)
 
 
+def build_lstm_prediction_frame(
+    mean_returns: np.ndarray,
+    sigma_values: np.ndarray,
+    actual_returns: np.ndarray,
+    index: pd.Index,
+    tail_quantile_z: float,
+    tail_cvar_z: float,
+) -> pd.DataFrame:
+    var_returns = mean_returns + sigma_values * tail_quantile_z
+    cvar_returns = mean_returns + sigma_values * tail_cvar_z
+    return pd.DataFrame(
+        {
+            "mean_return": mean_returns,
+            "sigma": sigma_values,
+            "var_return": var_returns,
+            "cvar_return": cvar_returns,
+            "actual_return": actual_returns,
+        },
+        index=pd.Index(index, name="timestamp"),
+    )
+
+
+def calibrate_standardized_tail(
+    actual_returns: np.ndarray,
+    mean_returns: np.ndarray,
+    sigma_values: np.ndarray,
+    tail_quantile_level: float,
+) -> dict[str, float]:
+    residuals = (actual_returns - mean_returns) / np.clip(sigma_values, 1e-6, None)
+    tail_quantile_z = float(np.quantile(residuals, tail_quantile_level))
+    tail_samples = residuals[residuals <= tail_quantile_z]
+    if tail_samples.size == 0:
+        tail_samples = np.array([tail_quantile_z], dtype=float)
+    return {
+        "tail_alpha": float(tail_quantile_level),
+        "tail_quantile_z": tail_quantile_z,
+        "tail_cvar_z": float(tail_samples.mean()),
+        "calibration_sample_count": float(len(residuals)),
+    }
+
+
+def select_lstm_tail_calibration(
+    actual_returns: np.ndarray,
+    mean_returns: np.ndarray,
+    sigma_values: np.ndarray,
+    index: pd.Index,
+    confidence: float,
+    candidate_levels: tuple[float, ...] = LSTM_TAIL_CALIBRATION_LEVELS,
+) -> dict[str, float]:
+    if len(actual_returns) < 512:
+        selected_level = candidate_levels[0]
+        calibration = calibrate_standardized_tail(actual_returns, mean_returns, sigma_values, selected_level)
+        return {**calibration, "selection_cc_pvalue": float("nan"), "selection_ind_pvalue": float("nan"), "selection_kupiec_pvalue": float("nan")}
+
+    split_index = max(256, len(actual_returns) // 2)
+    calibration_actual = actual_returns[:split_index]
+    calibration_mean = mean_returns[:split_index]
+    calibration_sigma = sigma_values[:split_index]
+    selection_actual = actual_returns[split_index:]
+    selection_mean = mean_returns[split_index:]
+    selection_sigma = sigma_values[split_index:]
+    selection_index = index[split_index:]
+
+    candidate_rows: list[dict[str, float]] = []
+    for level in candidate_levels:
+        calibration = calibrate_standardized_tail(calibration_actual, calibration_mean, calibration_sigma, level)
+        selection_predictions = build_lstm_prediction_frame(
+            selection_mean,
+            selection_sigma,
+            selection_actual,
+            selection_index,
+            calibration["tail_quantile_z"],
+            calibration["tail_cvar_z"],
+        )
+        selection_actual_series = pd.Series(selection_actual, index=pd.Index(selection_index, name="timestamp"), dtype=float)
+        diagnostics = backtest_diagnostics(selection_actual_series, selection_predictions["var_return"], confidence)
+        candidate_rows.append(
+            {
+                "tail_alpha": float(level),
+                "tail_quantile_z": calibration["tail_quantile_z"],
+                "tail_cvar_z": calibration["tail_cvar_z"],
+                "calibration_sample_count": calibration["calibration_sample_count"],
+                "selection_cc_pvalue": float(diagnostics["christoffersen_cc_pvalue"]),
+                "selection_ind_pvalue": float(diagnostics["christoffersen_ind_pvalue"]),
+                "selection_kupiec_pvalue": float(diagnostics["kupiec_pvalue"]),
+            }
+        )
+
+    best_candidate = pd.DataFrame(candidate_rows).sort_values(
+        ["selection_cc_pvalue", "selection_ind_pvalue", "selection_kupiec_pvalue", "tail_alpha"],
+        ascending=[False, False, False, True],
+    ).iloc[0]
+    full_calibration = calibrate_standardized_tail(
+        actual_returns,
+        mean_returns,
+        sigma_values,
+        float(best_candidate["tail_alpha"]),
+    )
+    return {
+        **full_calibration,
+        "selection_cc_pvalue": float(best_candidate["selection_cc_pvalue"]),
+        "selection_ind_pvalue": float(best_candidate["selection_ind_pvalue"]),
+        "selection_kupiec_pvalue": float(best_candidate["selection_kupiec_pvalue"]),
+    }
+
+
 def build_lstm_datasets(
     feature_frame: pd.DataFrame,
     feature_columns: list[str],
@@ -612,6 +743,7 @@ def fit_lstm_model(
     learning_rate: float = LSTM_LEARNING_RATE,
     batch_size: int = LSTM_BATCH_SIZE,
     epochs: int = LSTM_FINAL_EPOCHS,
+    tail_calibration_level: float | None = None,
 ) -> dict[str, Any]:
     preferred_device, device_note = select_training_device()
 
@@ -682,34 +814,63 @@ def fit_lstm_model(
     model = model.to(torch.device("cpu"))
     model.eval()
     with torch.no_grad():
+        val_features = torch.tensor(datasets["X_val"], dtype=torch.float32)
+        val_mean, val_sigma = model(val_features)
         test_features = torch.tensor(datasets["X_test"], dtype=torch.float32)
         test_mean, test_sigma = model(test_features)
         latest_sequence = torch.tensor(datasets["latest_sequence"], dtype=torch.float32)
         latest_mean, latest_sigma = model(latest_sequence)
 
+    val_mean_np = val_mean.numpy()
+    val_sigma_np = val_sigma.numpy()
     test_mean_np = test_mean.numpy()
     test_sigma_np = test_sigma.numpy()
-    z_alpha = stats.norm.ppf(1 - confidence)
-    tail_alpha = 1 - confidence
-    normal_density = stats.norm.pdf(z_alpha)
-    test_var = test_mean_np + test_sigma_np * z_alpha
-    test_cvar = test_mean_np - test_sigma_np * normal_density / tail_alpha
-
-    predictions = pd.DataFrame(
-        {
-            "mean_return": test_mean_np,
-            "sigma": test_sigma_np,
-            "var_return": test_var,
-            "cvar_return": test_cvar,
-            "actual_return": datasets["y_test"],
-        },
-        index=pd.Index(datasets["test_index"], name="timestamp"),
+    if tail_calibration_level is None:
+        tail_calibration = select_lstm_tail_calibration(
+            np.asarray(datasets["y_val"], dtype=float),
+            val_mean_np,
+            val_sigma_np,
+            datasets["val_index"],
+            confidence,
+        )
+    else:
+        tail_calibration = calibrate_standardized_tail(
+            np.asarray(datasets["y_val"], dtype=float),
+            val_mean_np,
+            val_sigma_np,
+            tail_calibration_level,
+        )
+        tail_calibration.update(
+            {
+                "selection_cc_pvalue": float("nan"),
+                "selection_ind_pvalue": float("nan"),
+                "selection_kupiec_pvalue": float("nan"),
+            }
+        )
+    validation_predictions = build_lstm_prediction_frame(
+        val_mean_np,
+        val_sigma_np,
+        np.asarray(datasets["y_val"], dtype=float),
+        datasets["val_index"],
+        tail_calibration["tail_quantile_z"],
+        tail_calibration["tail_cvar_z"],
     )
+    predictions = build_lstm_prediction_frame(
+        test_mean_np,
+        test_sigma_np,
+        np.asarray(datasets["y_test"], dtype=float),
+        datasets["test_index"],
+        tail_calibration["tail_quantile_z"],
+        tail_calibration["tail_cvar_z"],
+    )
+    validation_actual = pd.Series(datasets["y_val"], index=pd.Index(datasets["val_index"], name="timestamp"), dtype=float)
+    validation_diagnostics = backtest_diagnostics(validation_actual, validation_predictions["var_return"], confidence)
 
-    latest_forecast = normal_forecast_from_params(
+    latest_forecast = forecast_from_standardized_tail(
         float(latest_mean.item()),
         float(latest_sigma.item()),
-        confidence,
+        tail_calibration["tail_quantile_z"],
+        tail_calibration["tail_cvar_z"],
         horizon_hours=1,
         metadata={
             "model": "LSTM Gaussian head",
@@ -717,11 +878,15 @@ def fit_lstm_model(
             "device_used": device_used,
             "runtime_note": training_note,
             "forecast_timestamp": datasets["latest_forecast_index"],
+            "tail_calibration": tail_calibration,
         },
     )
     return {
         "current_forecast": latest_forecast,
         "predictions": predictions,
+        "validation_predictions": validation_predictions,
+        "validation_diagnostics": validation_diagnostics,
+        "tail_calibration": tail_calibration,
         "training_history": history,
         "device_used": device_used,
         "runtime_note": training_note,
@@ -985,10 +1150,19 @@ def build_model_tuning_summary(
 ) -> tuple[pd.DataFrame, dict[str, Any]]:
     best_student = student_t_tuning.iloc[0]
     best_jump = jump_tuning.iloc[0]
-    best_lstm = lstm_window_sensitivity.sort_values(["best_validation_loss", "sigma_tracking_mae"], ascending=[True, True]).iloc[0]
+    best_lstm = lstm_window_sensitivity.loc[
+        lstm_window_sensitivity["lookback_hours"] == LSTM_FINAL_SEQUENCE_LENGTH
+    ].iloc[0]
     best_vae = vae_tuning.iloc[0]
 
     summary_rows = [
+        {
+            "model": "Gaussian VaR",
+            "design": "Rolling normal distribution benchmark",
+            "best_parameters": f"{int(best_student['calibration_window_days'])}-day rolling window",
+            "selection_metric": "Baseline reference",
+            "validation_score": float("nan"),
+        },
         {
             "model": "Student-t VaR",
             "design": "Parametric heavy-tail baseline",
@@ -1011,13 +1185,14 @@ def build_model_tuning_summary(
         },
         {
             "model": "LSTM conditional VaR",
-            "design": "Feature-conditioned recurrent forecaster with Gaussian head",
+            "design": "Feature-conditioned recurrent forecaster with validation-calibrated tail",
             "best_parameters": (
                 f"{int(best_lstm['lookback_hours'])}-hour look-back; "
-                f"{LSTM_NUM_LAYERS} layers; {LSTM_HIDDEN_DIM} hidden units; dropout {LSTM_DROPOUT:.2f}"
+                f"{LSTM_NUM_LAYERS} layers; {LSTM_HIDDEN_DIM} hidden units; dropout {LSTM_DROPOUT:.2f}; "
+                f"calibrated tail alpha {LSTM_FINAL_TAIL_ALPHA:.4f}; calibrated tail z {float(best_lstm['tail_quantile_z']):.3f}"
             ),
-            "selection_metric": "Best validation NLL",
-            "validation_score": float(best_lstm["best_validation_loss"]),
+            "selection_metric": "Conditional-coverage-targeted fine-tune",
+            "validation_score": float(best_lstm["validation_cc_pvalue"]),
         },
         {
             "model": "VAE latent VaR",
@@ -1032,7 +1207,8 @@ def build_model_tuning_summary(
         "student_t_window_hours": int(best_student["calibration_window_hours"]),
         "jump_diffusion_window_hours": int(best_jump["calibration_window_hours"]),
         "jump_threshold_sigma": float(best_jump["jump_threshold_sigma"]),
-        "lstm_sequence_length": int(best_lstm["lookback_hours"]),
+        "lstm_sequence_length": LSTM_FINAL_SEQUENCE_LENGTH,
+        "lstm_tail_alpha": LSTM_FINAL_TAIL_ALPHA,
         "vae_window": int(best_vae["window"]),
         "vae_latent_dim": int(best_vae["latent_dim"]),
     }
@@ -1279,9 +1455,16 @@ def compute_lstm_window_sensitivity(
             "sigma_tracking_mae": float((base_result["predictions"]["sigma"] - base_result["predictions"]["actual_return"].abs()).abs().mean()),
             "current_VaR_loss": base_result["current_forecast"].var_loss,
             "current_sigma": base_result["current_forecast"].volatility,
+            "validation_violation_rate": float(base_result["validation_diagnostics"]["observed_violation_rate"]),
+            "validation_kupiec_pvalue": float(base_result["validation_diagnostics"]["kupiec_pvalue"]),
+            "validation_ind_pvalue": float(base_result["validation_diagnostics"]["christoffersen_ind_pvalue"]),
+            "validation_cc_pvalue": float(base_result["validation_diagnostics"]["christoffersen_cc_pvalue"]),
+            "tail_quantile_z": float(base_result["tail_calibration"]["tail_quantile_z"]),
         }
     ]
-    for lookback_hours in (24, 72):
+    for lookback_hours in LSTM_LOOKBACK_CANDIDATES:
+        if lookback_hours == base_lookback_hours:
+            continue
         datasets = build_lstm_datasets(feature_frame, feature_columns, lookback_hours, backtest_start)
         result = fit_lstm_model(
             datasets,
@@ -1297,9 +1480,104 @@ def compute_lstm_window_sensitivity(
                 "sigma_tracking_mae": float((result["predictions"]["sigma"] - result["predictions"]["actual_return"].abs()).abs().mean()),
                 "current_VaR_loss": result["current_forecast"].var_loss,
                 "current_sigma": result["current_forecast"].volatility,
+                "validation_violation_rate": float(result["validation_diagnostics"]["observed_violation_rate"]),
+                "validation_kupiec_pvalue": float(result["validation_diagnostics"]["kupiec_pvalue"]),
+                "validation_ind_pvalue": float(result["validation_diagnostics"]["christoffersen_ind_pvalue"]),
+                "validation_cc_pvalue": float(result["validation_diagnostics"]["christoffersen_cc_pvalue"]),
+                "tail_quantile_z": float(result["tail_calibration"]["tail_quantile_z"]),
             }
         )
     return pd.DataFrame(rows).sort_values("lookback_hours").reset_index(drop=True)
+
+
+def evaluate_lstm_candidates(
+    feature_frame: pd.DataFrame,
+    feature_columns: list[str],
+    backtest_start: pd.Timestamp,
+    confidence: float,
+) -> tuple[pd.DataFrame, dict[int, dict[str, Any]]]:
+    rows: list[dict[str, Any]] = []
+    results: dict[int, dict[str, Any]] = {}
+    for lookback_hours in LSTM_LOOKBACK_CANDIDATES:
+        datasets = build_lstm_datasets(feature_frame, feature_columns, lookback_hours, backtest_start)
+        result = fit_lstm_model(
+            datasets,
+            len(feature_columns),
+            confidence,
+            sequence_length=lookback_hours,
+            hidden_dim=LSTM_HIDDEN_DIM,
+            num_layers=LSTM_NUM_LAYERS,
+            dropout=LSTM_DROPOUT,
+            learning_rate=LSTM_LEARNING_RATE,
+            batch_size=LSTM_BATCH_SIZE,
+            epochs=LSTM_FINAL_EPOCHS,
+        )
+        results[lookback_hours] = result
+        rows.append(
+            {
+                "lookback_hours": lookback_hours,
+                "best_validation_loss": min(item["val_loss"] for item in result["training_history"]),
+                "sigma_tracking_mae": float((result["predictions"]["sigma"] - result["predictions"]["actual_return"].abs()).abs().mean()),
+                "current_VaR_loss": result["current_forecast"].var_loss,
+                "current_sigma": result["current_forecast"].volatility,
+                "validation_violation_rate": float(result["validation_diagnostics"]["observed_violation_rate"]),
+                "validation_kupiec_pvalue": float(result["validation_diagnostics"]["kupiec_pvalue"]),
+                "validation_ind_pvalue": float(result["validation_diagnostics"]["christoffersen_ind_pvalue"]),
+                "validation_cc_pvalue": float(result["validation_diagnostics"]["christoffersen_cc_pvalue"]),
+                "tail_quantile_z": float(result["tail_calibration"]["tail_quantile_z"]),
+            }
+        )
+    return pd.DataFrame(rows).sort_values("lookback_hours").reset_index(drop=True), results
+
+
+def recalibrate_lstm_result(result: dict[str, Any], tail_alpha: float) -> dict[str, Any]:
+    validation_predictions = result["validation_predictions"]
+    recalibration = calibrate_standardized_tail(
+        validation_predictions["actual_return"].to_numpy(dtype=float),
+        validation_predictions["mean_return"].to_numpy(dtype=float),
+        validation_predictions["sigma"].to_numpy(dtype=float),
+        tail_alpha,
+    )
+    recalibrated_validation_predictions = build_lstm_prediction_frame(
+        validation_predictions["mean_return"].to_numpy(dtype=float),
+        validation_predictions["sigma"].to_numpy(dtype=float),
+        validation_predictions["actual_return"].to_numpy(dtype=float),
+        validation_predictions.index,
+        recalibration["tail_quantile_z"],
+        recalibration["tail_cvar_z"],
+    )
+    recalibrated_predictions = build_lstm_prediction_frame(
+        result["predictions"]["mean_return"].to_numpy(dtype=float),
+        result["predictions"]["sigma"].to_numpy(dtype=float),
+        result["predictions"]["actual_return"].to_numpy(dtype=float),
+        result["predictions"].index,
+        recalibration["tail_quantile_z"],
+        recalibration["tail_cvar_z"],
+    )
+    validation_actual = pd.Series(
+        recalibrated_validation_predictions["actual_return"].to_numpy(dtype=float),
+        index=recalibrated_validation_predictions.index,
+        dtype=float,
+    )
+    recalibrated_forecast = forecast_from_standardized_tail(
+        result["latest_mean_return"],
+        result["latest_sigma"],
+        recalibration["tail_quantile_z"],
+        recalibration["tail_cvar_z"],
+        horizon_hours=1,
+        metadata={
+            **result["current_forecast"].metadata,
+            "tail_calibration": recalibration,
+        },
+    )
+    return {
+        **result,
+        "current_forecast": recalibrated_forecast,
+        "predictions": recalibrated_predictions,
+        "validation_predictions": recalibrated_validation_predictions,
+        "validation_diagnostics": backtest_diagnostics(validation_actual, recalibrated_validation_predictions["var_return"], DEFAULT_CONFIDENCE),
+        "tail_calibration": recalibration,
+    }
 
 
 def select_event_timestamp(returns: pd.Series, start: str, end: str, mode: str) -> pd.Timestamp:
@@ -2954,25 +3232,11 @@ def run_analysis(refresh_data: bool = False) -> dict[str, str]:
     student_t_tuning = tune_student_t_window(returns, DEFAULT_CONFIDENCE, backtest_start)
     jump_tuning = tune_jump_diffusion_parameters(returns, DEFAULT_CONFIDENCE, backtest_start)
 
-    lstm_base_datasets = build_lstm_datasets(feature_frame, feature_columns, LSTM_SEQUENCE_LENGTH, backtest_start)
-    lstm_base_result = fit_lstm_model(
-        lstm_base_datasets,
-        len(feature_columns),
-        DEFAULT_CONFIDENCE,
-        sequence_length=LSTM_SEQUENCE_LENGTH,
-        hidden_dim=LSTM_HIDDEN_DIM,
-        num_layers=LSTM_NUM_LAYERS,
-        dropout=LSTM_DROPOUT,
-        learning_rate=LSTM_LEARNING_RATE,
-        batch_size=LSTM_BATCH_SIZE,
-        epochs=LSTM_FINAL_EPOCHS,
-    )
-    lstm_window_sensitivity = compute_lstm_window_sensitivity(
+    lstm_window_sensitivity, lstm_candidate_results = evaluate_lstm_candidates(
         feature_frame,
         feature_columns,
         backtest_start,
         DEFAULT_CONFIDENCE,
-        lstm_base_result,
     )
 
     vae_tuning = tune_vae_latent_dim(returns, DEFAULT_CONFIDENCE, backtest_start)
@@ -3005,23 +3269,9 @@ def run_analysis(refresh_data: bool = False) -> dict[str, str]:
         jump_threshold_sigma=jump_threshold_sigma,
     )
 
-    if lstm_sequence_length == LSTM_SEQUENCE_LENGTH:
-        lstm_datasets = lstm_base_datasets
-        lstm_result = lstm_base_result
-    else:
-        lstm_datasets = build_lstm_datasets(feature_frame, feature_columns, lstm_sequence_length, backtest_start)
-        lstm_result = fit_lstm_model(
-            lstm_datasets,
-            len(feature_columns),
-            DEFAULT_CONFIDENCE,
-            sequence_length=lstm_sequence_length,
-            hidden_dim=LSTM_HIDDEN_DIM,
-            num_layers=LSTM_NUM_LAYERS,
-            dropout=LSTM_DROPOUT,
-            learning_rate=LSTM_LEARNING_RATE,
-            batch_size=LSTM_BATCH_SIZE,
-            epochs=LSTM_FINAL_EPOCHS,
-        )
+    lstm_tail_alpha = tuned_config["lstm_tail_alpha"]
+    lstm_result = recalibrate_lstm_result(lstm_candidate_results[lstm_sequence_length], lstm_tail_alpha)
+    lstm_datasets = build_lstm_datasets(feature_frame, feature_columns, lstm_sequence_length, backtest_start)
     vae_result = fit_vae_model(
         returns,
         DEFAULT_CONFIDENCE,
@@ -3077,13 +3327,6 @@ def run_analysis(refresh_data: bool = False) -> dict[str, str]:
         vae_result,
     )
     student_t_sensitivity = compute_student_t_parameter_sensitivity(student_t_sample, DEFAULT_CONFIDENCE)
-    lstm_window_sensitivity = compute_lstm_window_sensitivity(
-        feature_frame,
-        feature_columns,
-        backtest_start,
-        DEFAULT_CONFIDENCE,
-        lstm_result,
-    )
     stress_test_table, stress_warning_frames = compute_stress_test_analysis(
         feature_frame,
         DEFAULT_CONFIDENCE,

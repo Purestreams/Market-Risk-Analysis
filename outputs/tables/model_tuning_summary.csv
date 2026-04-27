@@ -1,5 +1,6 @@
 model,design,best_parameters,selection_metric,validation_score
+Gaussian VaR,Rolling normal distribution benchmark,90-day rolling window,Baseline reference,
 Student-t VaR,Parametric heavy-tail baseline,90-day rolling window; df estimated from sample kurtosis,Mean pinball loss,0.0002992041617655403
 Jump-diffusion Monte Carlo,Diffusion plus calibrated jump scenario engine,90-day rolling window; jump threshold 2.5 sigma,Mean pinball loss,0.00028115197448858487
-LSTM conditional VaR,Feature-conditioned recurrent forecaster with Gaussian head,48-hour look-back; 2 layers; 48 hidden units; dropout 0.10,Best validation NLL,-4.742692947387695
-VAE latent VaR,Latent generative return model on rolling windows,24-hour window; latent dimension 8,Best validation ELBO,0.5178287029266357
+LSTM conditional VaR,Feature-conditioned recurrent forecaster with validation-calibrated tail,72-hour look-back; 2 layers; 48 hidden units; dropout 0.10; calibrated tail alpha 0.0125; calibrated tail z -2.662,Conditional-coverage-targeted fine-tune,0.9623824771329496
+VAE latent VaR,Latent generative return model on rolling windows,24-hour window; latent dimension 8,Best validation ELBO,0.5177412033081055

@@ -57,16 +57,16 @@
     },
     {
       "block": "LSTM fit sequences",
-      "start": "2021-01-10 00:00:00 UTC",
-      "end": "2024-06-06 09:00:00 UTC",
-      "observations": 29842,
-      "design_note": "Chronological 48-hour feature sequences used for recurrent model fitting."
+      "start": "2021-01-11 00:00:00 UTC",
+      "end": "2024-06-06 14:00:00 UTC",
+      "observations": 29823,
+      "design_note": "Chronological 72-hour feature sequences used for recurrent model fitting."
     },
     {
       "block": "LSTM validation sequences",
-      "start": "2024-06-06 10:00:00 UTC",
+      "start": "2024-06-06 15:00:00 UTC",
       "end": "2025-04-13 05:00:00 UTC",
-      "observations": 7460,
+      "observations": 7455,
       "design_note": "Final 20% of pre-backtest sequence targets reserved for neural validation."
     },
     {
@@ -115,12 +115,12 @@
     {
       "model": "LSTM",
       "horizon_hours": 1,
-      "VaR_return": -0.010786254445739989,
-      "CVaR_return": -0.012487072855963836,
-      "VaR_loss": 0.010786254445739989,
-      "CVaR_loss": 0.012487072855963836,
-      "mean_return": 0.0008900165557861328,
-      "volatility": 0.005019142292439938
+      "VaR_return": -0.011576579740457784,
+      "CVaR_return": -0.015282235074898528,
+      "VaR_loss": 0.011576579740457784,
+      "CVaR_loss": 0.015282235074898528,
+      "mean_return": -0.0008575655519962311,
+      "volatility": 0.004317410755902529
     },
     {
       "model": "Parametric Student-t",
@@ -135,12 +135,12 @@
     {
       "model": "VAE",
       "horizon_hours": 1,
-      "VaR_return": -0.00962521880865097,
-      "CVaR_return": -0.011537652462720871,
-      "VaR_loss": 0.00962521880865097,
-      "CVaR_loss": 0.011537652462720871,
-      "mean_return": -3.6592035030480474e-05,
-      "volatility": 0.0035763101186603308
+      "VaR_return": -0.011732930317521095,
+      "CVaR_return": -0.01438596285879612,
+      "VaR_loss": 0.011732930317521095,
+      "CVaR_loss": 0.01438596285879612,
+      "mean_return": -2.4590117391198874e-05,
+      "volatility": 0.004195778630673885
     },
     {
       "model": "Gaussian benchmark",
@@ -175,15 +175,22 @@
     {
       "model": "VAE",
       "horizon_hours": 24,
-      "VaR_return": -0.03244267776608467,
-      "CVaR_return": -0.03949635103344917,
-      "VaR_loss": 0.03244267776608467,
-      "CVaR_loss": 0.03949635103344917,
-      "mean_return": 0.0007618203526362777,
-      "volatility": 0.013724958524107933
+      "VaR_return": -0.041882459074258804,
+      "CVaR_return": -0.048609763383865356,
+      "VaR_loss": 0.041882459074258804,
+      "CVaR_loss": 0.048609763383865356,
+      "mean_return": -0.0014551131753250957,
+      "volatility": 0.017366964370012283
     }
   ],
   "model_tuning_summary": [
+    {
+      "model": "Gaussian VaR",
+      "design": "Rolling normal distribution benchmark",
+      "best_parameters": "90-day rolling window",
+      "selection_metric": "Baseline reference",
+      "validation_score": NaN
+    },
     {
       "model": "Student-t VaR",
       "design": "Parametric heavy-tail baseline",
@@ -200,17 +207,17 @@
     },
     {
       "model": "LSTM conditional VaR",
-      "design": "Feature-conditioned recurrent forecaster with Gaussian head",
-      "best_parameters": "48-hour look-back; 2 layers; 48 hidden units; dropout 0.10",
-      "selection_metric": "Best validation NLL",
-      "validation_score": -4.742692947387695
+      "design": "Feature-conditioned recurrent forecaster with validation-calibrated tail",
+      "best_parameters": "72-hour look-back; 2 layers; 48 hidden units; dropout 0.10; calibrated tail alpha 0.0125; calibrated tail z -2.662",
+      "selection_metric": "Conditional-coverage-targeted fine-tune",
+      "validation_score": 0.9623824771329496
     },
     {
       "model": "VAE latent VaR",
       "design": "Latent generative return model on rolling windows",
       "best_parameters": "24-hour window; latent dimension 8",
       "selection_metric": "Best validation ELBO",
-      "validation_score": 0.5178287029266357
+      "validation_score": 0.5177412033081055
     }
   ],
   "confidence_sensitivity": [
@@ -238,16 +245,16 @@
     {
       "confidence_level_pct": 95.0,
       "model": "LSTM",
-      "VaR_loss": 0.007365737848119225,
-      "CVaR_loss": 0.00946303253353191,
-      "volatility": 0.005019142292439938
+      "VaR_loss": 0.007959074292881802,
+      "CVaR_loss": 0.009763144013466694,
+      "volatility": 0.004317410755902529
     },
     {
       "confidence_level_pct": 95.0,
       "model": "VAE",
-      "VaR_loss": 0.00608670013025403,
-      "CVaR_loss": 0.008176430128514767,
-      "volatility": 0.0035763101186603308
+      "VaR_loss": 0.007415662985295057,
+      "CVaR_loss": 0.010111626237630844,
+      "volatility": 0.004195778630673885
     },
     {
       "confidence_level_pct": 97.5,
@@ -273,16 +280,16 @@
     {
       "confidence_level_pct": 97.5,
       "model": "LSTM",
-      "VaR_loss": 0.008947321570677949,
-      "CVaR_loss": 0.010843748309936155,
-      "volatility": 0.005019142292439938
+      "VaR_loss": 0.009319535140031037,
+      "CVaR_loss": 0.010950820472225576,
+      "volatility": 0.004317410755902529
     },
     {
       "confidence_level_pct": 97.5,
       "model": "VAE",
-      "VaR_loss": 0.007470051757991314,
-      "CVaR_loss": 0.009637271985411644,
-      "volatility": 0.0035763101186603308
+      "VaR_loss": 0.009271860122680664,
+      "CVaR_loss": 0.011989973485469818,
+      "volatility": 0.004195778630673885
     },
     {
       "confidence_level_pct": 99.0,
@@ -307,17 +314,17 @@
     },
     {
       "confidence_level_pct": 99.0,
-      "model": "LSTM",
-      "VaR_loss": 0.010786254445739989,
-      "CVaR_loss": 0.012487072855963836,
-      "volatility": 0.005019142292439938
+      "model": "VAE",
+      "VaR_loss": 0.011732930317521095,
+      "CVaR_loss": 0.01438596285879612,
+      "volatility": 0.004195778630673885
     },
     {
       "confidence_level_pct": 99.0,
-      "model": "VAE",
-      "VaR_loss": 0.00962521880865097,
-      "CVaR_loss": 0.011537652462720871,
-      "volatility": 0.0035763101186603308
+      "model": "LSTM",
+      "VaR_loss": 0.010901364885351138,
+      "CVaR_loss": 0.012364390093701584,
+      "volatility": 0.004317410755902529
     }
   ],
   "student_t_parameter_sensitivity": [
@@ -367,31 +374,47 @@
   "lstm_window_sensitivity": [
     {
       "lookback_hours": 24,
-      "best_validation_loss": -4.749049663543701,
-      "sigma_tracking_mae": 0.0033836709335446358,
-      "current_VaR_loss": 0.011069590181889865,
-      "current_sigma": 0.004887561779469252
+      "best_validation_loss": -4.699437618255615,
+      "sigma_tracking_mae": 0.0038090118096477344,
+      "current_VaR_loss": 0.013988726926652281,
+      "current_sigma": 0.005384222604334354,
+      "validation_violation_rate": 0.010046885465505693,
+      "validation_kupiec_pvalue": 0.9675495735609165,
+      "validation_ind_pvalue": 0.04731517180097522,
+      "validation_cc_pvalue": 0.1397499857588833,
+      "tail_quantile_z": -2.2807909974134613
     },
     {
       "lookback_hours": 48,
-      "best_validation_loss": -4.742692947387695,
-      "sigma_tracking_mae": 0.003595866961404681,
-      "current_VaR_loss": 0.010786254445739989,
-      "current_sigma": 0.005019142292439938
+      "best_validation_loss": -4.766506195068359,
+      "sigma_tracking_mae": 0.0033393327305261933,
+      "current_VaR_loss": 0.012274927077108474,
+      "current_sigma": 0.004882936365902424,
+      "validation_violation_rate": 0.010053619302949061,
+      "validation_kupiec_pvalue": 0.9629086168664404,
+      "validation_ind_pvalue": 0.7851977593124293,
+      "validation_cc_pvalue": 0.9624977489048343,
+      "tail_quantile_z": -2.573101876581546
     },
     {
       "lookback_hours": 72,
-      "best_validation_loss": -4.731233596801758,
-      "sigma_tracking_mae": 0.0036824168637394905,
-      "current_VaR_loss": 0.011604282917717557,
-      "current_sigma": 0.005279604345560074
+      "best_validation_loss": -4.76939582824707,
+      "sigma_tracking_mae": 0.002958937002557626,
+      "current_VaR_loss": 0.012350358542833203,
+      "current_sigma": 0.004317410755902529,
+      "validation_violation_rate": 0.01006036217303823,
+      "validation_kupiec_pvalue": 0.9582668317826513,
+      "validation_ind_pvalue": 0.785672404680084,
+      "validation_cc_pvalue": 0.9623824771329496,
+      "tail_quantile_z": -2.6619642282413483
     }
   ],
   "tuning_config": {
     "student_t_window_hours": 2160,
     "jump_diffusion_window_hours": 2160,
     "jump_threshold_sigma": 2.5,
-    "lstm_sequence_length": 48,
+    "lstm_sequence_length": 72,
+    "lstm_tail_alpha": 0.0125,
     "vae_window": 24,
     "vae_latent_dim": 8
   },
@@ -483,17 +506,17 @@
     },
     {
       "position_notional_usd": 1000000,
-      "model": "LSTM",
+      "model": "VAE",
       "horizon_hours": 1,
-      "VaR_capital_usd": 10786.254445739989,
-      "CVaR_capital_usd": 12487.072855963836
+      "VaR_capital_usd": 11732.930317521095,
+      "CVaR_capital_usd": 14385.96285879612
     },
     {
       "position_notional_usd": 1000000,
-      "model": "VAE",
+      "model": "LSTM",
       "horizon_hours": 1,
-      "VaR_capital_usd": 9625.21880865097,
-      "CVaR_capital_usd": 11537.652462720871
+      "VaR_capital_usd": 11576.579740457784,
+      "CVaR_capital_usd": 15282.235074898528
     },
     {
       "position_notional_usd": 1000000,
@@ -520,8 +543,8 @@
       "position_notional_usd": 1000000,
       "model": "VAE",
       "horizon_hours": 24,
-      "VaR_capital_usd": 32442.67776608467,
-      "CVaR_capital_usd": 39496.35103344917
+      "VaR_capital_usd": 41882.459074258804,
+      "CVaR_capital_usd": 48609.76338386536
     }
   ],
   "backtest_summary": [
@@ -573,32 +596,32 @@
     {
       "model": "LSTM conditional VaR",
       "observations": 8761.0,
-      "violations": 81.0,
+      "violations": 72.0,
       "expected_violation_rate": 0.010000000000000009,
-      "observed_violation_rate": 0.0092455199178176,
-      "kupiec_lr": 0.5167855040756422,
-      "kupiec_pvalue": 0.47221612481411157,
-      "christoffersen_lr_ind": 7.168985778378783,
-      "christoffersen_ind_pvalue": 0.0074174699004911915,
-      "violation_transition_01": 0.008871989860583017,
-      "violation_transition_11": 0.04938271604938271,
-      "christoffersen_lr_cc": 7.685771282454425,
-      "christoffersen_cc_pvalue": 0.021431667924719067
+      "observed_violation_rate": 0.008218239926948978,
+      "kupiec_lr": 2.99109739443918,
+      "kupiec_pvalue": 0.08372341299810726,
+      "christoffersen_lr_ind": 2.1107671374932124,
+      "christoffersen_ind_pvalue": 0.14626597797787755,
+      "violation_transition_01": 0.008057090239410682,
+      "violation_transition_11": 0.027777777777777776,
+      "christoffersen_lr_cc": 5.101864531932392,
+      "christoffersen_cc_pvalue": 0.07800890704197672
     },
     {
       "model": "VAE latent VaR",
       "observations": 8761.0,
-      "violations": 204.0,
+      "violations": 133.0,
       "expected_violation_rate": 0.010000000000000009,
-      "observed_violation_rate": 0.02328501312635544,
-      "kupiec_lr": 113.64063250296817,
-      "kupiec_pvalue": 0.0,
-      "christoffersen_lr_ind": 32.680245980709515,
-      "christoffersen_ind_pvalue": 1.0863569488428482e-08,
-      "violation_transition_01": 0.021388499298737727,
-      "violation_transition_11": 0.10294117647058823,
-      "christoffersen_lr_cc": 146.3208784836777,
-      "christoffersen_cc_pvalue": 0.0
+      "observed_violation_rate": 0.015180915420614085,
+      "kupiec_lr": 20.50071166392854,
+      "kupiec_pvalue": 5.960908428859213e-06,
+      "christoffersen_lr_ind": 7.8294771633597975,
+      "christoffersen_ind_pvalue": 0.0051400965802917975,
+      "violation_transition_01": 0.014605308913875044,
+      "violation_transition_11": 0.05263157894736842,
+      "christoffersen_lr_cc": 28.33018882728834,
+      "christoffersen_cc_pvalue": 7.049814026993673e-07
     }
   ],
   "figure_paths": {

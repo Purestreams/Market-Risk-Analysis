@@ -20,7 +20,7 @@ The dataset contains 46,279 cleaned hourly observations built from Binance BTC/U
 
 ## Methodology
 
-The benchmark layer contains two rolling parametric baselines: a Gaussian VaR benchmark and a Student-t VaR benchmark, both estimated on the same recent return window so that the distributional assumption is the main moving part (Jorion, 2007; McNeil, Frey, and Embrechts, 2015). The structural scenario layer adds jump-diffusion Monte Carlo with 10,000 simulation paths and a tuned jump threshold in a Merton-style discontinuous-return setting (Merton, 1976). The neural layer adds a one-step LSTM with a Gaussian output head and a VAE that learns latent return-window structure for synthetic scenario generation (Hochreiter and Schmidhuber, 1997; Kingma and Welling, 2014). Feature engineering supplies log returns, rolling 24-hour and 168-hour volatility, RSI(14), MACD with signal line, and a rolling volume z-score to the conditional models. Chronological splitting is enforced throughout. The final-year backtest holdout spans 2025-04-13 06:00:00 UTC to 2026-04-13 06:00:00 UTC with 8,761 hourly observations. Student-t and jump-diffusion hyperparameters are tuned on a 30-day pre-backtest slice sampled every 6 hours, which yields 120 validation checkpoints. For the neural models, the final 20% of the pre-backtest sequences or rolling windows are reserved for validation, giving 7,460 LSTM validation sequences and 7,498 VAE validation windows. The LSTM is trained with AdamW, learning rate 0.001, batch size 256, and 8 epochs, with the final checkpoint chosen by minimum validation Gaussian negative log-likelihood. The VAE is trained with AdamW, learning rate 0.001, batch size 512, 20 epochs, and a reconstruction-plus-KL loss on rolling 24-hour windows. Validation scores in the tuning table therefore represent mean pinball loss for the parametric models, validation Gaussian NLL for the LSTM, and validation ELBO-style loss for the VAE.
+The benchmark layer contains two rolling parametric baselines: a Gaussian VaR benchmark and a Student-t VaR benchmark, both estimated on the same recent return window so that the distributional assumption is the main moving part (Jorion, 2007; McNeil, Frey, and Embrechts, 2015). The structural scenario layer adds jump-diffusion Monte Carlo with 10,000 simulation paths and a tuned jump threshold in a Merton-style discontinuous-return setting (Merton, 1976). The neural layer adds a one-step LSTM with a Gaussian output head and a VAE that learns latent return-window structure for synthetic scenario generation (Hochreiter and Schmidhuber, 1997; Kingma and Welling, 2014). Feature engineering supplies log returns, rolling 24-hour and 168-hour volatility, RSI(14), MACD with signal line, and a rolling volume z-score to the conditional models. Chronological splitting is enforced throughout. The final-year backtest holdout spans 2025-04-13 06:00:00 UTC to 2026-04-13 06:00:00 UTC with 8,761 hourly observations. Student-t and jump-diffusion hyperparameters are tuned on a 30-day pre-backtest slice sampled every 6 hours, which yields 120 validation checkpoints. For the neural models, the final 20% of the pre-backtest sequences or rolling windows are reserved for validation, giving 7,455 LSTM validation sequences and 7,498 VAE validation windows. The LSTM is trained with AdamW, learning rate 0.001, batch size 256, and 8 epochs, with the final checkpoint chosen by minimum validation Gaussian negative log-likelihood. The VAE is trained with AdamW, learning rate 0.001, batch size 512, 20 epochs, and a reconstruction-plus-KL loss on rolling 24-hour windows. Validation scores in the tuning table therefore represent mean pinball loss for the parametric models, validation Gaussian NLL for the LSTM, and validation ELBO-style loss for the VAE.
 
 ### Method Overview
 
@@ -36,10 +36,11 @@ The benchmark layer contains two rolling parametric baselines: a Gaussian VaR be
 
 | model | design | best_parameters | selection_metric | validation_score |
 | --- | --- | --- | --- | --- |
+| Gaussian VaR | Rolling normal distribution benchmark | 90-day rolling window | Baseline reference |  |
 | Student-t VaR | Parametric heavy-tail baseline | 90-day rolling window; df estimated from sample kurtosis | Mean pinball loss | 0.0003 |
 | Jump-diffusion Monte Carlo | Diffusion plus calibrated jump scenario engine | 90-day rolling window; jump threshold 2.5 sigma | Mean pinball loss | 0.0003 |
-| LSTM cond. VaR | Feature-conditioned recurrent forecaster with Gaussian head | 48-hour look-back; 2 layers; 48 hidden units; dropout 0.10 | Best validation NLL | -4.7427 |
-| VAE latent VaR | Latent generative return model on rolling windows | 24-hour window; latent dimension 8 | Best validation ELBO | 0.5178 |
+| LSTM cond. VaR | Feature-conditioned recurrent forecaster with validation-calibrated tail | 72-hour look-back; 2 layers; 48 hidden units; dropout 0.10; calibrated tail alpha 0.0125; calibrated tail z -2.662 | Conditional-coverage-targeted fine-tune | 0.9624 |
+| VAE latent VaR | Latent generative return model on rolling windows | 24-hour window; latent dimension 8 | Best validation ELBO | 0.5177 |
 
 ### Sample Split Summary
 
@@ -49,8 +50,8 @@ The benchmark layer contains two rolling parametric baselines: a Gaussian VaR be
 | Pre-backtest return history | 2021-01-01 01:00:00 UTC | 2025-04-13 05:00:00 UTC | 37517 | History available for model estimation before the final one-year holdout. |
 | Tuning validation slice | 2025-03-14 06:00:00 UTC | 2025-04-13 00:00:00 UTC | 120 | Chronological validation checkpoints every 6 hours for Student-t and jump-diffusion tuning. |
 | Backtest holdout | 2025-04-13 06:00:00 UTC | 2026-04-13 06:00:00 UTC | 8761 | Final one-year out-of-sample window used for Kupiec coverage testing. |
-| LSTM fit sequences | 2021-01-10 00:00:00 UTC | 2024-06-06 09:00:00 UTC | 29842 | Chronological 48-hour feature sequences used for recurrent model fitting. |
-| LSTM validation sequences | 2024-06-06 10:00:00 UTC | 2025-04-13 05:00:00 UTC | 7460 | Final 20% of pre-backtest sequence targets reserved for neural validation. |
+| LSTM fit sequences | 2021-01-11 00:00:00 UTC | 2024-06-06 14:00:00 UTC | 29823 | Chronological 72-hour feature sequences used for recurrent model fitting. |
+| LSTM validation sequences | 2024-06-06 15:00:00 UTC | 2025-04-13 05:00:00 UTC | 7455 | Final 20% of pre-backtest sequence targets reserved for neural validation. |
 | LSTM backtest sequences | 2025-04-13 06:00:00 UTC | 2026-04-13 06:00:00 UTC | 8761 | Out-of-sample sequence targets used for the one-step conditional backtest. |
 | VAE train windows | 2021-01-01 01:00:00 UTC | 2024-06-04 19:00:00 UTC | 29996 | Rolling 24-hour windows used to estimate the latent generative model. |
 | VAE validation windows | 2024-06-03 21:00:00 UTC | 2025-04-13 05:00:00 UTC | 7498 | Final 20% of pre-backtest rolling windows used for chronological latent-model validation. |
@@ -89,13 +90,13 @@ Over the full sample, Bitcoin delivered a cumulative price change of 144.96%. In
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | Gaussian VaR | 1 | -0.0131 | -0.015 | 0.0131 | 0.015 | -0.0001 | 0.0056 |
 | Jump-diffusion MC | 1 | -0.0163 | -0.0281 | 0.0163 | 0.0281 | -0.0003 | 0.0066 |
-| LSTM | 1 | -0.0108 | -0.0125 | 0.0108 | 0.0125 | 0.0009 | 0.005 |
+| LSTM | 1 | -0.0116 | -0.0153 | 0.0116 | 0.0153 | -0.0009 | 0.0043 |
 | Student-t param. | 1 | -0.0147 | -0.0194 | 0.0147 | 0.0194 | -0.0001 | 0.0043 |
-| VAE | 1 | -0.0096 | -0.0115 | 0.0096 | 0.0115 | 0 | 0.0036 |
+| VAE | 1 | -0.0117 | -0.0144 | 0.0117 | 0.0144 | 0 | 0.0042 |
 | Gaussian VaR | 24 | -0.0665 | -0.0757 | 0.0665 | 0.0757 | -0.0029 | 0.0273 |
 | Jump-diffusion MC | 24 | -0.0829 | -0.096 | 0.0829 | 0.096 | -0.0046 | 0.0323 |
 | Student-t param. | 24 | -0.0672 | -0.0779 | 0.0672 | 0.0779 | -0.0029 | 0.0272 |
-| VAE | 24 | -0.0324 | -0.0395 | 0.0324 | 0.0395 | 0.0008 | 0.0137 |
+| VAE | 24 | -0.0419 | -0.0486 | 0.0419 | 0.0486 | -0.0015 | 0.0174 |
 
 ![Monte Carlo paths](figures/monte_carlo_paths.png)
 
@@ -110,18 +111,18 @@ Sensitivity analysis confirms the expected widening of downside risk as confiden
 | 95 | Jump-diffusion MC | 0.0097 | 0.0143 | 0.0067 |
 | 95 | Gaussian VaR | 0.0093 | 0.0116 | 0.0056 |
 | 95 | Student-t param. | 0.0088 | 0.0126 | 0.0043 |
-| 95 | LSTM | 0.0074 | 0.0095 | 0.005 |
-| 95 | VAE | 0.0061 | 0.0082 | 0.0036 |
+| 95 | LSTM | 0.008 | 0.0098 | 0.0043 |
+| 95 | VAE | 0.0074 | 0.0101 | 0.0042 |
 | 97.5 | Jump-diffusion MC | 0.0119 | 0.0179 | 0.0065 |
 | 97.5 | Student-t param. | 0.0112 | 0.0153 | 0.0043 |
 | 97.5 | Gaussian VaR | 0.0111 | 0.0132 | 0.0056 |
-| 97.5 | LSTM | 0.0089 | 0.0108 | 0.005 |
-| 97.5 | VAE | 0.0075 | 0.0096 | 0.0036 |
+| 97.5 | LSTM | 0.0093 | 0.011 | 0.0043 |
+| 97.5 | VAE | 0.0093 | 0.012 | 0.0042 |
 | 99 | Jump-diffusion MC | 0.016 | 0.0284 | 0.0067 |
 | 99 | Student-t param. | 0.0147 | 0.0194 | 0.0043 |
 | 99 | Gaussian VaR | 0.0131 | 0.015 | 0.0056 |
-| 99 | LSTM | 0.0108 | 0.0125 | 0.005 |
-| 99 | VAE | 0.0096 | 0.0115 | 0.0036 |
+| 99 | VAE | 0.0117 | 0.0144 | 0.0042 |
+| 99 | LSTM | 0.0109 | 0.0124 | 0.0043 |
 
 ### Student-t Degrees-of-Freedom Impact
 
@@ -136,11 +137,11 @@ Sensitivity analysis confirms the expected widening of downside risk as confiden
 
 ### LSTM Look-back Window Impact
 
-| lookback_hours | best_validation_loss | sigma_tracking_mae | current_VaR_loss | current_sigma |
-| --- | --- | --- | --- | --- |
-| 24 | -4.749 | 0.0034 | 0.0111 | 0.0049 |
-| 48 | -4.7427 | 0.0036 | 0.0108 | 0.005 |
-| 72 | -4.7312 | 0.0037 | 0.0116 | 0.0053 |
+| lookback_hours | best_validation_loss | sigma_tracking_mae | current_VaR_loss | current_sigma | validation_violation_rate | validation_kupiec_pvalue | validation_ind_pvalue | validation_cc_pvalue | tail_quantile_z |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 24 | -4.6994 | 0.0038 | 0.014 | 0.0054 | 0.01 | 0.9675 | 0.0473 | 0.1397 | -2.2808 |
+| 48 | -4.7665 | 0.0033 | 0.0123 | 0.0049 | 0.0101 | 0.9629 | 0.7852 | 0.9625 | -2.5731 |
+| 72 | -4.7694 | 0.003 | 0.0124 | 0.0043 | 0.0101 | 0.9583 | 0.7857 | 0.9624 | -2.662 |
 
 ## Stress Testing
 
@@ -175,24 +176,24 @@ For a hypothetical $1 million BTC spot position, the largest 24-hour VaR capital
 | 1000000 | Jump-diffusion MC | 1 | 16276.37 | 28112.64 |
 | 1000000 | Student-t param. | 1 | 14655.86 | 19350.76 |
 | 1000000 | Gaussian VaR | 1 | 13094.56 | 14984.39 |
-| 1000000 | LSTM | 1 | 10786.25 | 12487.07 |
-| 1000000 | VAE | 1 | 9625.22 | 11537.65 |
+| 1000000 | VAE | 1 | 11732.93 | 14385.96 |
+| 1000000 | LSTM | 1 | 11576.58 | 15282.24 |
 | 1000000 | Jump-diffusion MC | 24 | 82946.43 | 96006.01 |
 | 1000000 | Student-t param. | 24 | 67183.15 | 77946.75 |
 | 1000000 | Gaussian VaR | 24 | 66455.78 | 75714.02 |
-| 1000000 | VAE | 24 | 32442.68 | 39496.35 |
+| 1000000 | VAE | 24 | 41882.46 | 48609.76 |
 
 ## Backtesting
 
-The last-year backtest evaluates 8,761 one-hour forecasts against a 1% tail target using both Kupiec's unconditional coverage test and Christoffersen's independence and conditional-coverage diagnostics (Kupiec, 1995; Christoffersen, 1998). LSTM cond. VaR delivers the strongest joint result with a conditional-coverage p-value of 0.021, while the Gaussian benchmark posts a Kupiec p-value of 0.000 and a conditional-coverage p-value of 0.000. At the 5% significance level, Gaussian VaR, Student-t VaR, Jump-diffusion MC, LSTM cond. VaR, and VAE latent VaR are rejected by the conditional-coverage test, so no model is retained by that criterion on this holdout window. That pattern suggests that conditional adaptation improves tail calibration on this holdout window, but it is still evidence about this sample path rather than proof that one specification dominates in every regime.
+The last-year backtest evaluates 8,761 one-hour forecasts against a 1% tail target using both Kupiec's unconditional coverage test and Christoffersen's independence and conditional-coverage diagnostics (Kupiec, 1995; Christoffersen, 1998). LSTM cond. VaR delivers the strongest joint result with a conditional-coverage p-value of 0.078, while the Gaussian benchmark posts a Kupiec p-value of 0.000 and a conditional-coverage p-value of 0.000. At the 5% significance level, Gaussian VaR, Student-t VaR, Jump-diffusion MC, and VAE latent VaR are rejected by the conditional-coverage test, whereas LSTM cond. VaR is not rejected. That pattern suggests that conditional adaptation improves tail calibration on this holdout window, but it is still evidence about this sample path rather than proof that one specification dominates in every regime.
 
 | model | observations | violations | expected_violation_rate | observed_violation_rate | kupiec_pvalue | christoffersen_ind_pvalue | christoffersen_cc_pvalue |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | Gaussian VaR | 8761 | 184 | 0.01 | 0.021 | <0.0001 | <0.0001 | <0.0001 |
 | Student-t VaR | 8761 | 129 | 0.01 | 0.0147 | <0.0001 | 0.0001 | <0.0001 |
 | Jump-diffusion MC | 8761 | 110 | 0.01 | 0.0126 | 0.0208 | 0.0005 | 0.0002 |
-| LSTM cond. VaR | 8761 | 81 | 0.01 | 0.0092 | 0.4722 | 0.0074 | 0.0214 |
-| VAE latent VaR | 8761 | 204 | 0.01 | 0.0233 | <0.0001 | <0.0001 | <0.0001 |
+| LSTM cond. VaR | 8761 | 72 | 0.01 | 0.0082 | 0.0837 | 0.1463 | 0.078 |
+| VAE latent VaR | 8761 | 133 | 0.01 | 0.0152 | <0.0001 | 0.0051 | <0.0001 |
 
 ![VaR backtest](figures/var_backtest.png)
 

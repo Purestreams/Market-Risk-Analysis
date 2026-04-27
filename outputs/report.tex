@@ -5,7 +5,7 @@
 
 \subsection{Abstract}
 
-This report evaluates whether a Gaussian Value at Risk benchmark is credible for Bitcoin when the asset is observed at hourly frequency from 2021-01-01 00:00:00 UTC to 2026-04-13 06:00:00 UTC. The empirical design compares a rolling Gaussian benchmark with four richer model families: a parametric Student-t specification, a jump-diffusion Monte Carlo engine, a feature-conditioned LSTM, and a variational autoencoder used for latent scenario generation. The evidence rejects the Gaussian baseline on both tail shape and backtest diagnostics, supports heavy-tailed and state-dependent modeling, and shows that LSTM cond. VaR provides the strongest one-hour conditional coverage result in the final-year backtest, while jump-diffusion remains the more conservative scenario engine under stress.
+This report evaluates whether a Gaussian Value at Risk benchmark is credible for Bitcoin when the asset is observed at hourly frequency from 2021-01-01 00:00:00 UTC to 2026-04-13 06:00:00 UTC. The empirical design compares a rolling Gaussian benchmark with four richer model families: a parametric Student-t specification, a jump-diffusion Monte Carlo engine, a feature-conditioned LSTM, and a variational autoencoder used for latent scenario generation. The evidence rejects the Gaussian baseline on both tail shape and backtest diagnostics, supports heavy-tailed and state-dependent modeling, and shows that the LSTM model is the only specification to pass the conditional-coverage backtest at the 5\% significance level.
 
 \subsection{Introduction}
 
@@ -25,7 +25,7 @@ The dataset contains 46,279 cleaned hourly observations built from Binance BTC/U
 
 \subsection{Methodology}
 
-The benchmark layer contains two rolling parametric baselines: a Gaussian VaR benchmark and a Student-t VaR benchmark, both estimated on the same recent return window so that the distributional assumption is the main moving part (Jorion, 2007; McNeil, Frey, and Embrechts, 2015). The structural scenario layer adds jump-diffusion Monte Carlo with 10,000 simulation paths and a tuned jump threshold in a Merton-style discontinuous-return setting (Merton, 1976). The neural layer adds a one-step LSTM with a Gaussian output head and a VAE that learns latent return-window structure for synthetic scenario generation (Hochreiter and Schmidhuber, 1997; Kingma and Welling, 2014). Feature engineering supplies log returns, rolling 24-hour and 168-hour volatility, RSI(14), MACD with signal line, and a rolling volume z-score to the conditional models. Chronological splitting is enforced throughout. The final-year backtest holdout spans 2025-04-13 06:00:00 UTC to 2026-04-13 06:00:00 UTC with 8,761 hourly observations. Student-t and jump-diffusion hyperparameters are tuned on a 30-day pre-backtest slice sampled every 6 hours, which yields 120 validation checkpoints. For the neural models, the final 20\% of the pre-backtest sequences or rolling windows are reserved for validation, giving 7,460 LSTM validation sequences and 7,498 VAE validation windows. The LSTM is trained with AdamW, learning rate 0.001, batch size 256, and 8 epochs, with the final checkpoint chosen by minimum validation Gaussian negative log-likelihood. The VAE is trained with AdamW, learning rate 0.001, batch size 512, 20 epochs, and a reconstruction-plus-KL loss on rolling 24-hour windows. Validation scores in the tuning table therefore represent mean pinball loss for the parametric models, validation Gaussian NLL for the LSTM, and validation ELBO-style loss for the VAE.
+The benchmark layer contains two rolling parametric baselines: a Gaussian VaR benchmark and a Student-t VaR benchmark, both estimated on the same 90-day recent return window so that the distributional assumption is the main moving part (Jorion, 2007; McNeil, Frey, and Embrechts, 2015). The structural scenario layer adds jump-diffusion Monte Carlo with 10,000 simulation paths and a tuned jump threshold in a Merton-style discontinuous-return setting (Merton, 1976). The neural layer adds a one-step LSTM with a Gaussian output head and a VAE that learns latent return-window structure for synthetic scenario generation (Hochreiter and Schmidhuber, 1997; Kingma and Welling, 2014). Feature engineering supplies log returns, rolling 24-hour and 168-hour volatility, RSI(14), MACD with signal line, and a rolling volume z-score to the conditional models. Chronological splitting is enforced throughout. The final-year backtest holdout spans 2025-04-13 06:00:00 UTC to 2026-04-13 06:00:00 UTC with 8,761 hourly observations. Student-t and jump-diffusion hyperparameters are tuned on a 30-day pre-backtest slice sampled every 6 hours, which yields 120 validation checkpoints. For the neural models, the final 20\% of the pre-backtest sequences or rolling windows are reserved for validation, giving 7,455 LSTM validation sequences and 7,498 VAE validation windows. The LSTM is trained with AdamW, learning rate 0.001, batch size 256, and 8 epochs, with the final checkpoint chosen by minimum validation Gaussian negative log-likelihood. The VAE is trained with AdamW, learning rate 0.001, batch size 512, 20 epochs, and a reconstruction-plus-KL loss on rolling 24-hour windows. Validation scores in the tuning table therefore represent mean pinball loss for the parametric models, validation Gaussian NLL for the LSTM, and validation ELBO-style loss for the VAE.
 
 \subsubsection*{Method Overview}
 
@@ -92,7 +92,7 @@ The descriptive evidence rejects Gaussianity decisively. The Jarque-Bera statist
 
 \subsection{Model Results}
 
-Over the full sample, Bitcoin delivered a cumulative price change of 144.96\%. In the current forecast snapshot, the one-hour VaR rankings differ materially by methodology, with the most conservative 99\% estimate coming from Jump-diffusion MC at 1.60\%. The Gaussian benchmark currently reports a one-hour VaR loss of 1.31\%, versus 1.47\% for the Student-t benchmark estimated on the same rolling history. The Student-t model remains the most interpretable heavy-tail baseline, the jump-diffusion engine provides the most stress-aware structural scenarios, and the LSTM contributes the most explicitly conditional one-step signal. Because the recurrent model is estimated as a one-step conditional forecaster, the 24-hour comparison table includes only models that directly produce multi-period distributions through aggregation or simulation.
+Over the full sample, Bitcoin delivered a cumulative price change of 144.96\%. In the current forecast snapshot, the one-hour VaR rankings differ materially by methodology, with the most conservative 99\% estimate coming from Jump-diffusion MC at 1.63\%. The Gaussian benchmark currently reports a one-hour VaR loss of 1.31\%, versus 1.47\% for the Student-t benchmark estimated on the same rolling history. The Student-t model remains the most interpretable heavy-tail baseline, the jump-diffusion engine provides the most stress-aware structural scenarios, and the LSTM contributes the most explicitly conditional one-step signal. Because the recurrent model is estimated as a one-step conditional forecaster, the 24-hour comparison table includes only models that directly produce multi-period distributions through aggregation or simulation.
 
 \input{tables/current_var_estimates.tex}
 
@@ -104,7 +104,7 @@ Over the full sample, Bitcoin delivered a cumulative price change of 144.96\%. I
 
 \subsection{Sensitivity Analysis}
 
-Sensitivity analysis confirms the expected widening of downside risk as confidence moves from 95\% to 99\%. At 99\%, the largest one-hour VaR loss remains 1.60\%. The Gaussian row in the confidence table provides the thin-tailed benchmark, the Student-t parameter sweep shows that lower degrees of freedom amplify tail losses in a nonlinear way, and the LSTM look-back sweep shows a trade-off between responsiveness and stability.
+Sensitivity analysis confirms the expected widening of downside risk as confidence moves from 95\% to 99\%. At 99\%, the largest one-hour VaR loss remains 1.63\%. The Gaussian row in the confidence table provides the thin-tailed benchmark, the Student-t parameter sweep shows that lower degrees of freedom amplify tail losses in a nonlinear way, and the LSTM look-back sweep shows a trade-off between responsiveness and stability.
 
 \subsubsection*{Confidence-Level Comparison}
 
@@ -120,7 +120,7 @@ Sensitivity analysis confirms the expected widening of downside risk as confiden
 
 \subsection{Stress Testing}
 
-The stress section is designed as a two-window case-study exercise rather than an exhaustive event screen. Two pre-specified event windows are defined in code, and the event timestamp inside each window is selected algorithmically by either the worst one-hour loss or the largest absolute one-hour move; warnings are then evaluated over the preceding 24-hour horizon. Within that design, the FTX collapse window peaks at 2022-11-08 17:00:00 UTC with a realized one-hour loss of 5.18\%, and the ETF whipsaw peaks at 2024-01-11 15:00:00 UTC with a realized absolute move of 3.75\%. In both cases, the jump-diffusion engine issues the strongest warning profile and lands closest to the realized loss. At the same time, every one-hour VaR model understates the realized event loss by a wide margin, so the stress section should be interpreted as a warning-comparison exercise rather than a claim of exact crisis prediction.
+The stress section is designed as a two-window case-study exercise rather than an exhaustive event screen; one downside exchange-failure regime and one policy/news-driven whipsaw regime were chosen to contrast crash risk and two-sided event volatility. Two pre-specified event windows are defined in code, and the event timestamp inside each window is selected algorithmically by either the worst one-hour loss or the largest absolute one-hour move; warnings are then evaluated over the preceding 24-hour horizon. Within that design, the FTX collapse window peaks at 2022-11-08 17:00:00 UTC with a realized one-hour loss of 5.18\%, and the ETF whipsaw peaks at 2024-01-11 15:00:00 UTC with a realized absolute move of 3.75\%. In both cases, the jump-diffusion engine issues the strongest warning profile and lands closest to the realized loss. At the same time, every one-hour VaR model understates the realized event loss by a wide margin, so the stress section should be interpreted as a warning-comparison exercise rather than a claim of exact crisis prediction.
 
 \input{tables/stress_test_overview.tex}
 
@@ -148,7 +148,7 @@ For a hypothetical \$1 million BTC spot position, the largest 24-hour VaR capita
 
 \subsection{Backtesting}
 
-The last-year backtest evaluates 8,761 one-hour forecasts against a 1\% tail target using both Kupiec's unconditional coverage test and Christoffersen's independence and conditional-coverage diagnostics (Kupiec, 1995; Christoffersen, 1998). LSTM cond. VaR delivers the strongest joint result with a conditional-coverage p-value of 0.021, while the Gaussian benchmark posts a Kupiec p-value of 0.000 and a conditional-coverage p-value of 0.000. At the 5\% significance level, Gaussian VaR, Student-t VaR, Jump-diffusion MC, LSTM cond. VaR, and VAE latent VaR are rejected by the conditional-coverage test, so no model is retained by that criterion on this holdout window. That pattern suggests that conditional adaptation improves tail calibration on this holdout window, but it is still evidence about this sample path rather than proof that one specification dominates in every regime.
+The last-year backtest evaluates 8,761 one-hour forecasts against a 1\% tail target using both Kupiec's unconditional coverage test and Christoffersen's independence and conditional-coverage diagnostics (Kupiec, 1995; Christoffersen, 1998). The LSTM model secures a conditional-coverage p-value of 0.078, while the Gaussian benchmark posts a Kupiec p-value of 0.000 and a conditional-coverage p-value of 0.000. At the 5\% significance level, the LSTM model is the only specification to pass the conditional-coverage test. That pattern suggests that conditional adaptation is a decisive factor in tail calibration on this holdout window, but it is still evidence about this sample path rather than proof that one specification dominates in every regime.
 
 \input{tables/kupiec_backtest_summary.tex}
 
@@ -176,23 +176,23 @@ The project has several explicit limitations. The benchmark is a proxy BTC/USDT 
 
 \subsection{Discussion}
 
-Two empirical themes dominate the evidence. First, Bitcoin exhibits persistent volatility clustering, so state dependence matters even when raw returns themselves are weakly autocorrelated (Engle, 1982). Second, the downside tail is too heavy for a Gaussian benchmark to be credible: the Gaussian row understates tail risk relative to the matched Student-t benchmark and is weaker than Student-t VaR on the final-year backtest. Those facts explain why the project benefits from layering models instead of selecting a single winner for every use case.
+Two empirical themes dominate the evidence. First, Bitcoin exhibits persistent volatility clustering, so state dependence matters even when raw returns themselves are weakly autocorrelated (Engle, 1982). Second, the downside tail is too heavy for a Gaussian benchmark to be credible: the Gaussian row understates tail risk relative to the matched Student-t benchmark and is weaker than Student-t VaR on the final-year backtest. Those facts explain why the project benefits from layering models that produce materially different risk estimates instead of selecting a single winner for every use case.
 
 \subsection{Conclusion}
 
-The main conclusion is that Gaussian hourly VaR is not an adequate benchmark for Bitcoin. Heavy-tailed parametric modeling, jump-aware simulation, and conditional neural forecasting all add economically meaningful information relative to a thin-tailed variance-only baseline. In this project, the jump-diffusion engine is the strongest conservative scenario benchmark, while the LSTM is the strongest one-hour conditional overlay on the final holdout year under the current conditional-coverage diagnostics.
+The main conclusion is that Gaussian hourly VaR is not an adequate benchmark for Bitcoin. Heavy-tailed parametric modeling, jump-aware simulation, and conditional neural forecasting all add materially different risk estimates relative to a thin-tailed variance-only baseline. In this project, the jump-diffusion engine is the strongest conservative scenario benchmark, while the LSTM is the only model to pass the conditional-coverage backtest on the final holdout year.
 
 \subsection{References}
 
 \begin{enumerate}
 \item Jorion, Philippe. 2007. Value at Risk: The New Benchmark for Managing Financial Risk. 3rd ed. New York: McGraw-Hill.
 \item McNeil, Alexander J., Rudiger Frey, and Paul Embrechts. 2015. Quantitative Risk Management: Concepts, Techniques and Tools. Revised ed. Princeton: Princeton University Press.
-\item Kupiec, Paul H. 1995. Techniques for Verifying the Accuracy of Risk Measurement Models. Journal of Derivatives 3(2): 73-84.
-\item Christoffersen, Peter F. 1998. Evaluating Interval Forecasts. International Economic Review 39(4): 841-862.
-\item Merton, Robert C. 1976. Option Pricing When Underlying Stock Returns Are Discontinuous. Journal of Financial Economics 3(1-2): 125-144.
-\item Engle, Robert F. 1982. Autoregressive Conditional Heteroscedasticity with Estimates of the Variance of United Kingdom Inflation. Econometrica 50(4): 987-1007.
-\item Hochreiter, Sepp, and Jurgen Schmidhuber. 1997. Long Short-Term Memory. Neural Computation 9(8): 1735-1780.
-\item Kingma, Diederik P., and Max Welling. 2014. Auto-Encoding Variational Bayes. 2nd International Conference on Learning Representations.
+\item Kupiec, Paul H. 1995. Techniques for Verifying the Accuracy of Risk Measurement Models. Journal of Derivatives 3(2): 73-84. DOI: 10.3905/jod.1995.407942.
+\item Christoffersen, Peter F. 1998. Evaluating Interval Forecasts. International Economic Review 39(4): 841-862. DOI: 10.2307/2527341.
+\item Merton, Robert C. 1976. Option Pricing When Underlying Stock Returns Are Discontinuous. Journal of Financial Economics 3(1-2): 125-144. DOI: 10.1016/0304-405X(76)90022-2.
+\item Engle, Robert F. 1982. Autoregressive Conditional Heteroscedasticity with Estimates of the Variance of United Kingdom Inflation. Econometrica 50(4): 987-1007. DOI: 10.2307/1912773.
+\item Hochreiter, Sepp, and Jurgen Schmidhuber. 1997. Long Short-Term Memory. Neural Computation 9(8): 1735-1780. DOI: 10.1162/neco.1997.9.8.1735.
+\item Kingma, Diederik P., and Max Welling. 2014. Auto-Encoding Variational Bayes. 2nd International Conference on Learning Representations. DOI: 10.48550/arXiv.1312.6114.
 \end{enumerate}
 
 \subsection{Appendix}
