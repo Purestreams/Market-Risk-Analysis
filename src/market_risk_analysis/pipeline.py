@@ -2290,6 +2290,11 @@ def export_analysis_tables(
             "sigma_tracking_mae": "Sigma MAE",
             "current_VaR_loss": "Current VaR loss",
             "current_sigma": "Current sigma",
+            "validation_violation_rate": "Val fail rate",
+            "validation_kupiec_pvalue": "Val POF p",
+            "validation_ind_pvalue": "Val IND p",
+            "validation_cc_pvalue": "Val CC p",
+            "tail_quantile_z": "Tail z",
         }
     )
     stress_display = format_report_table(stress_test_table)
@@ -2432,7 +2437,14 @@ def export_analysis_tables(
             "3pt",
         ),
         ("student_t_df_sensitivity.tex", student_t_display, 4, "@{}lllll@{}", "footnotesize", "2pt"),
-        ("lstm_window_sensitivity.tex", lstm_display, 4, "@{}lllll@{}", "footnotesize", "2pt"),
+        (
+            "lstm_window_sensitivity.tex",
+            lstm_display,
+            4,
+            "@{}>{\\RaggedLeft\\arraybackslash}p{0.07\\linewidth}*{4}{>{\\RaggedLeft\\arraybackslash}p{0.08\\linewidth}}*{4}{>{\\RaggedLeft\\arraybackslash}p{0.11\\linewidth}}>{\\RaggedLeft\\arraybackslash}p{0.07\\linewidth}@{}",
+            "scriptsize",
+            "1pt",
+        ),
         ("stress_test_overview.tex", stress_overview, 4, "@{}lllllll@{}", "scriptsize", "3pt"),
         ("stress_test_warnings.tex", stress_warning, 4, "@{}llllll@{}", "scriptsize", "3pt"),
         ("time_scale_scaling.tex", scaling_display, 4, "@{}llll@{}", "footnotesize", "3pt"),
