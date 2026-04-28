@@ -5,15 +5,14 @@
 
 \subsection{Abstract}
 
-This report evaluates whether a Gaussian Value at Risk benchmark is credible for Bitcoin when the asset is observed at hourly frequency. The empirical design compares a rolling Gaussian benchmark with four richer model families: a parametric Student-t specification, a jump-diffusion Monte Carlo engine, a feature-conditioned LSTM, and a variational autoencoder used for latent scenario generation. The evidence rejects the Gaussian baseline on both tail shape and backtest diagnostics, supports heavy-tailed and state-dependent modeling, and shows that the LSTM model is the only specification to pass the conditional-coverage backtest at the 5\% significance level.
+This study assesses the credibility of a Gaussian Value at Risk benchmark for Bitcoin when the asset is analyzed at an hourly frequency. The empirical design juxtaposes a rolling Gaussian benchmark against four more sophisticated model families: a parametric Student-t specification, a jump-diffusion Monte Carlo engine, a feature-conditioned LSTM, and a variational autoencoder employed for latent scenario synthesis. The data discredits the Gaussian baseline for both tail shape and backtest diagnostics, endorses heavy-tailed and state-dependent modeling, and demonstrates that the LSTM model is the sole specification to succeed in the conditional-coverage backtest at the 5\% significance level.
 
 \subsection{Introduction}
 
-The central research question is whether a simple Gaussian VaR framework can describe Bitcoin downside risk at an hourly horizon, or whether the data require heavier tails, jump risk, and conditional machine-learning overlays. That question matters academically because Bitcoin combines large volatility clusters, event-driven discontinuities, and rapid regime changes that can break the assumptions behind textbook variance-scaling rules and thin-tailed parametric benchmarks (Jorion, 2007; McNeil, Frey, and Embrechts, 2015). The report therefore evaluates model credibility along three dimensions: distributional fit, out-of-sample tail calibration, and stress-period warning quality.
-
+The main topic of the research is whether a simple Gaussian VaR framework can explain Bitcoin's downside risk over the course of an hour, or whether the data needs thicker tails, jump risk, and conditional machine-learning overlays. That question is important in academia because Bitcoin has big volatility clusters, sudden changes in events, and fast changes in regimes that can break the rules for textbook variance-scaling and thin-tailed parametric benchmarks (Jorion, 2007; McNeil, Frey, and Embrechts, 2015). The report assesses model credibility across three dimensions: distributional fit, out-of-sample tail calibration, and stress-period warning quality.
 \subsection{Data}
 
-The dataset contains 46,279 cleaned hourly observations built from Binance BTC/USDT spot candles between 2021-01-01 and 2026-04-13. Data cleaning filled 14 missing hours, removed 0 duplicate rows, and repaired 0 candidate flash-crash artefacts. BTC/USDT is used as a liquid USD proxy, which is operationally convenient for uninterrupted hourly sampling but should still be interpreted as a proxy benchmark rather than a pure fiat BTC/USD series.
+The dataset has 46,279 cleaned hourly observations made from Binance BTC/USDT spot candles from January 1, 2021 to April 13, 2026. Data cleaning added 14 hours that were missing, got rid of 0 duplicate rows, and fixed 0 potential flash-crash artifacts. BTC/USDT is utilized as a liquid USD proxy, which makes it easier to sample every hour without interruption, but it should still be seen as a proxy benchmark rather than a pure fiat BTC/USD series.
 
 \input{tables/data_quality.tex}
 
@@ -72,7 +71,7 @@ The report complements this with Christoffersen-style independence and condition
 
 \subsection{Statistical Diagnostics}
 
-The descriptive evidence rejects Gaussianity decisively. The Jarque-Bera statistic reaches 491079.15 with a near-zero p-value, while skewness is -0.207 and kurtosis is 18.955. Hourly returns range from -9.38\% to 11.61\%, and the ADF statistic of -30.208 rejects a unit root in the return series. Taken together, these diagnostics support heavy-tailed and conditional models rather than a thin-tailed homoskedastic baseline.
+The descriptive data definitively refutes Gaussianity. The Jarque-Bera statistic is 491079.15, with a p-value that is very close to zero. The skewness is -0.207, and the kurtosis is 18.955. The ADF statistic of -30.208 rejects a unit root in the return series, and the hourly returns range from -9.38\% to 11.61\%. When looked at conjunction, these tests show that heavy-tailed and conditional models are better than a thin-tailed homoskedastic baseline.
 
 \input{tables/descriptive_statistics_main.tex}
 
@@ -112,7 +111,7 @@ The overall VaR is measured from the full historical return distribution: the on
 
 \subsection{Sensitivity Analysis}
 
-Sensitivity analysis confirms the expected widening of downside risk as confidence moves from 95\% to 99\%. At 99\%, the largest one-hour VaR loss remains 1.63\%. The Gaussian row in the confidence table provides the thin-tailed benchmark, the Student-t parameter sweep shows that lower degrees of freedom amplify tail losses in a nonlinear way, and the LSTM look-back sweep shows a trade-off between responsiveness and stability.
+Sensitivity analysis shows that the downside risk is likely to grow when confidence rises from 95\% to 99\%. The biggest one-hour VaR decrease is still 1.63\% at 99\%. The Gaussian row in the confidence table gives the thin-tailed benchmark, the Student-t parameter sweep illustrates that lesser degrees of freedom make tail losses worse in a nonlinear way, and the LSTM look-back sweep shows that you have to choose between responsiveness and stability.
 
 \subsubsection*{Confidence-Level Comparison}
 
@@ -142,7 +141,7 @@ The stress section is designed as a two-window case-study exercise rather than a
 
 \subsection{Time-Scale Scaling}
 
-The square-root-of-time rule is only partially reliable for Bitcoin. The scaled one-day 99\% VaR is 9.43\% versus an empirical one-day VaR of 8.74\%, while the scaled ten-day VaR is 29.83\% against an empirical ten-day VaR of 27.66\%. Weak linear autocorrelation in raw returns coexists with persistent autocorrelation in absolute returns, which implies that volatility clustering rather than mean predictability is the main reason naive variance scaling can misstate long-horizon risk.
+The square-root-of-time rule doesn't always work for Bitcoin. The scaled one-day 99\% VaR is 9.43\%, while the empirical one-day VaR is 8.74\%. The scaled ten-day VaR is 29.83\%, while the empirical ten-day VaR is 27.66\%. Weak linear autocorrelation in raw returns appears alongside persistent autocorrelation in absolute returns, indicating that volatility clustering, rather than mean predictability, is the primary factor causing naive variance scaling to misrepresent long-horizon risk.
 
 \input{tables/time_scale_scaling.tex}
 
@@ -156,7 +155,7 @@ For a hypothetical \$1 million BTC spot position, the largest 24-hour VaR capita
 
 \subsection{Backtesting}
 
-The last-year backtest evaluates 8,761 one-hour forecasts against a 1\% tail target using both Kupiec's unconditional coverage test and Christoffersen's independence and conditional-coverage diagnostics (Kupiec, 1995; Christoffersen, 1998). The LSTM model secures a conditional-coverage p-value of 0.078, while the Gaussian benchmark posts a Kupiec p-value of 0.000 and a conditional-coverage p-value of 0.000. At the 5\% significance level, the LSTM model is the only specification to pass the conditional-coverage test. That pattern suggests that conditional adaptation is a decisive factor in tail calibration on this holdout window, but it is still evidence about this sample path rather than proof that one specification dominates in every regime.
+The last-year backtest uses both Kupiec's unconditional coverage test and Christoffersen's independence and conditional-coverage diagnostics to look at 8,761 one-hour forecasts against a 1\% tail target (Kupiec, 1995; Christoffersen, 1998). The LSTM model has a conditional-coverage p-value of 0.078, while the Gaussian benchmark has a Kupiec p-value of 0.000 and a conditional-coverage p-value of 0.000. The LSTM model is the only one that passes the conditional-coverage test at the 5\% significance level. That trend shows that conditional adaptation is a key feature in tail calibration on this holdout window. However, it is still evidence regarding this sample route and not proof that one specification works better in every environment.
 
 \input{tables/kupiec_backtest_summary.tex}
 
@@ -180,15 +179,15 @@ The last-year backtest evaluates 8,761 one-hour forecasts against a 1\% tail tar
 
 \subsection{Limitations}
 
-The project has several explicit limitations. The benchmark is a proxy BTC/USDT series rather than a fiat BTC/USD market, the report relies on hourly candles rather than intrahour depth, and the backtesting section still evaluates only one realized holdout year even after adding conditional-coverage diagnostics. The neural models improve adaptability but remain harder to interpret than the parametric baseline, and the validation design is chronological rather than full rolling-origin cross-validation across multiple non-overlapping regimes. Finally, the reported VaR and CVaR numbers are market-risk statistics rather than liquidity-adjusted liquidation losses.
+There are a few clear limits to the project. The benchmark is a proxy BTC/USDT series instead of a fiat BTC/USD market. The report uses hourly candles instead of intrahour depth, and the backtesting part only looks at one realized holdout year, even after adding conditional-coverage diagnostics. The neural models make things more flexible, but they are still harder to understand than the parametric baseline. Also, the validation approach is based on time rather than full rolling-origin cross-validation across several non-overlapping regimes. Finally, the VaR and CVaR data that were presented are market-risk statistics, not losses from liquidation that have been adjusted for liquidity.
 
 \subsection{Discussion}
 
-Two empirical themes dominate the evidence. First, Bitcoin exhibits persistent volatility clustering, so state dependence matters even when raw returns themselves are weakly autocorrelated (Engle, 1982). Second, the downside tail is too heavy for a Gaussian benchmark to be credible: the Gaussian row understates tail risk relative to the matched Student-t benchmark and is weaker than Student-t VaR on the final-year backtest. Those facts explain why the project benefits from layering models that produce materially different risk estimates instead of selecting a single winner for every use case.
+Two empirical themes predominate the evidence. Bitcoin has persistent volatility clustering, which means that state dependency is important even when raw returns are only weakly autocorrelated (Engle, 1982). Second, the downside tail is too high for a Gaussian benchmark to be believable. The Gaussian row shows less tail risk than the matching Student-t benchmark and is weaker than Student-t VaR on the final-year backtest. Those facts show why the project is better off with layers of models that give highly varied risk estimations instead of picking one winner for each use case.
 
 \subsection{Conclusion}
 
-The main conclusion is that Gaussian hourly VaR is not an adequate benchmark for Bitcoin. Heavy-tailed parametric modeling, jump-aware simulation, and conditional neural forecasting all add materially different risk estimates relative to a thin-tailed variance-only baseline. In this project, the jump-diffusion engine is the strongest conservative scenario benchmark, while the LSTM is the only model to pass the conditional-coverage backtest on the final holdout year.
+The primary conclusion is that Gaussian hourly VaR is an insufficient baseline for Bitcoin. Compared to a thin-tailed variance-only baseline, heavy-tailed parametric modeling, jump-aware simulation, and conditional neural forecasting all give very different risk estimations. The jump-diffusion engine is the best conservative scenario benchmark for this project. The LSTM is the sole model that passed the conditional-coverage backtest for the last holdout year.
 
 \subsection{References}
 
