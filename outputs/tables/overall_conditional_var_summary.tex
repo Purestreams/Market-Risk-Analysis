@@ -1,0 +1,23 @@
+\begingroup
+\scriptsize
+\setlength{\tabcolsep}{1pt}
+\begin{longtable}{@{}>{\RaggedRight\arraybackslash}p{0.13\linewidth}>{\RaggedRight\arraybackslash}p{0.23\linewidth}*{4}{>{\RaggedLeft\arraybackslash}p{0.09\linewidth}}>{\RaggedRight\arraybackslash}p{0.24\linewidth}@{}}
+\toprule
+Scope & Basis & Horizon (h) & VaR loss & CVaR loss & Mean ret. & Interpretation \\
+\midrule
+\endfirsthead
+\toprule
+Scope & Basis & Horizon (h) & VaR loss & CVaR loss & Mean ret. & Interpretation \\
+\midrule
+\endhead
+\midrule
+\multicolumn{7}{r}{Continued on next page} \\
+\midrule
+\endfoot
+\bottomrule
+\endlastfoot
+Overall empirical & Full-sample historical distribution & 1 & 0.0193 & 0.0279 & 0.0000 & Average unconditional one-hour tail risk over the full sample. \\
+Conditional forecast & Jump-diffusion MC current forecast & 1 & 0.0163 & 0.0281 & -0.0003 & Most conservative current one-hour forecast across model families. \\
+Conditional forecast & LSTM current forecast & 1 & 0.0116 & 0.0153 & -0.0009 & Feature-conditioned one-step forecast using the latest market state. \\
+\end{longtable}
+\endgroup

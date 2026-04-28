@@ -5,7 +5,7 @@
 
 \subsection{Abstract}
 
-This report evaluates whether a Gaussian Value at Risk benchmark is credible for Bitcoin when the asset is observed at hourly frequency. The empirical design compares a rolling Gaussian benchmark with four richer model families: a parametric Student-t specification, a jump-diffusion Monte Carlo engine, a feature-conditioned LSTM, and a variational autoencoder used for latent scenario generation. The evidence rejects the Gaussian baseline on both tail shape and backtest diagnostics, supports heavy-tailed and state-dependent modeling, and shows that the LSTM model is the only specification to pass the conditional-coverage backtest at the 5\% significance level.
+This report evaluates whether a Gaussian Value at Risk benchmark is credible for Bitcoin when the asset is observed at hourly frequency from 2021-01-01 00:00:00 UTC to 2026-04-13 06:00:00 UTC. The empirical design compares a rolling Gaussian benchmark with four richer model families: a parametric Student-t specification, a jump-diffusion Monte Carlo engine, a feature-conditioned LSTM, and a variational autoencoder used for latent scenario generation. The evidence rejects the Gaussian baseline on both tail shape and backtest diagnostics, supports heavy-tailed and state-dependent modeling, and shows that the LSTM model is the only specification to pass the conditional-coverage backtest at the 5\% significance level.
 
 \subsection{Introduction}
 
@@ -13,9 +13,11 @@ The central research question is whether a simple Gaussian VaR framework can des
 
 \subsection{Data}
 
-The dataset contains 46,279 cleaned hourly observations built from Binance BTC/USDT spot candles between 2021-01-01 and 2026-04-13. Data cleaning filled 14 missing hours, removed 0 duplicate rows, and repaired 0 candidate flash-crash artefacts. BTC/USDT is used as a liquid USD proxy, which is operationally convenient for uninterrupted hourly sampling but should still be interpreted as a proxy benchmark rather than a pure fiat BTC/USD series.
+The dataset contains 46,279 cleaned hourly observations built from Binance BTC/USDT spot candles between 2021-01-01 00:00:00 UTC and 2026-04-13 06:00:00 UTC. Data cleaning filled 14 missing hours, removed 0 duplicate rows, and repaired 0 candidate flash-crash artefacts. BTC/USDT is used as a liquid USD proxy, which is operationally convenient for uninterrupted hourly sampling but should still be interpreted as a proxy benchmark rather than a pure fiat BTC/USD series.
 
-\input{tables/data_quality.tex}
+\begin{center}
+\includegraphics[width=\linewidth]{table_images/data_quality-1.jpg}
+\end{center}
 
 \begin{figure}[htbp]
 \centering
@@ -29,31 +31,21 @@ The benchmark layer contains two rolling parametric baselines: a Gaussian VaR be
 
 \subsubsection*{Method Overview}
 
-\begingroup
-\small
-\setlength{\tabcolsep}{4pt}
 \begin{center}
-\begin{tabularx}{0.98\linewidth}{@{}>{\RaggedRight\arraybackslash}p{0.10\linewidth}>{\RaggedRight\arraybackslash}p{0.18\linewidth}>{\RaggedRight\arraybackslash}X>{\RaggedRight\arraybackslash}X@{}}
-\toprule
-Method & Model & Primary role & Main trade-off \\
-\midrule
-A & Gaussian VaR & Thin-tailed rolling benchmark used to test whether a Gaussian assumption is adequate. & Transparent baseline, but structurally weak under heavy tails and volatility clustering. \\
-B & Student-t VaR & Parametric heavy-tail benchmark using a rolling return window. & Transparent and fast, but only weakly conditional on current market state. \\
-C & Jump-diffusion Monte Carlo & Scenario engine that combines continuous diffusion with discrete jump risk. & More realistic under stress, but sensitive to jump-calibration choices. \\
-D & LSTM Gaussian head & Feature-conditioned one-step forecast of mean and volatility. & Adaptive to regime shifts, but harder to validate and explain. \\
-E & VAE latent sampling & Generative model for synthetic return scenarios and latent tail structure. & Useful for scenario enrichment, but weaker as a standalone production VaR engine. \\
-\bottomrule
-\end{tabularx}
+\includegraphics[width=\linewidth]{table_images/method_overview-1.jpg}
 \end{center}
-\endgroup
 
 \subsubsection*{Tuned Model Settings}
 
-\input{tables/model_tuning_summary.tex}
+\begin{center}
+\includegraphics[width=\linewidth]{table_images/model_tuning_summary-1.jpg}
+\end{center}
 
 \subsubsection*{Sample Split Summary}
 
-\input{tables/sample_split_summary.tex}
+\begin{center}
+\includegraphics[width=\linewidth]{table_images/sample_split_summary-1.jpg}
+\end{center}
 
 The downside tail metrics used in the report follow the standard left-tail definitions:
 
@@ -74,9 +66,13 @@ The report complements this with Christoffersen-style independence and condition
 
 The descriptive evidence rejects Gaussianity decisively. The Jarque-Bera statistic reaches 491079.15 with a near-zero p-value, while skewness is -0.207 and kurtosis is 18.955. Hourly returns range from -9.38\% to 11.61\%, and the ADF statistic of -30.208 rejects a unit root in the return series. Taken together, these diagnostics support heavy-tailed and conditional models rather than a thin-tailed homoskedastic baseline.
 
-\input{tables/descriptive_statistics_main.tex}
+\begin{center}
+\includegraphics[width=\linewidth]{table_images/descriptive_statistics_main-1.jpg}
+\end{center}
 
-\input{tables/descriptive_statistics_tail.tex}
+\begin{center}
+\includegraphics[width=\linewidth]{table_images/descriptive_statistics_tail-1.jpg}
+\end{center}
 
 \begin{figure}[htbp]
 \centering
@@ -94,7 +90,9 @@ The descriptive evidence rejects Gaussianity decisively. The Jarque-Bera statist
 
 Over the full sample, Bitcoin delivered a cumulative price change of 144.96\%. In the current forecast snapshot, the one-hour VaR rankings differ materially by methodology, with the most conservative 99\% estimate coming from Jump-diffusion MC at 1.63\%. The Gaussian benchmark currently reports a one-hour VaR loss of 1.31\%, versus 1.47\% for the Student-t benchmark estimated on the same rolling history. The Student-t model remains the most interpretable heavy-tail baseline, the jump-diffusion engine provides the most stress-aware structural scenarios, and the LSTM contributes the most explicitly conditional one-step signal. Because the recurrent model is estimated as a one-step conditional forecaster, the 24-hour comparison table includes only models that directly produce multi-period distributions through aggregation or simulation.
 
-\input{tables/current_var_estimates.tex}
+\begin{center}
+\includegraphics[width=\linewidth]{table_images/current_var_estimates-1.jpg}
+\end{center}
 
 \subsubsection*{Overall and Conditional VaR Summary}
 
@@ -116,23 +114,33 @@ Sensitivity analysis confirms the expected widening of downside risk as confiden
 
 \subsubsection*{Confidence-Level Comparison}
 
-\input{tables/confidence_sensitivity.tex}
+\begin{center}
+\includegraphics[width=\linewidth]{table_images/confidence_sensitivity-1.jpg}
+\end{center}
 
 \subsubsection*{Student-t Degrees-of-Freedom Impact}
 
-\input{tables/student_t_df_sensitivity.tex}
+\begin{center}
+\includegraphics[width=\linewidth]{table_images/student_t_df_sensitivity-1.jpg}
+\end{center}
 
 \subsubsection*{LSTM Look-back Window Impact}
 
-\input{tables/lstm_window_sensitivity.tex}
+\begin{center}
+\includegraphics[width=\linewidth]{table_images/lstm_window_sensitivity-1.jpg}
+\end{center}
 
 \subsection{Stress Testing}
 
 The stress section is designed as a two-window case-study exercise rather than an exhaustive event screen; one downside exchange-failure regime and one policy/news-driven whipsaw regime were chosen to contrast crash risk and two-sided event volatility. Two pre-specified event windows are defined in code, and the event timestamp inside each window is selected algorithmically by either the worst one-hour loss or the largest absolute one-hour move; warnings are then evaluated over the preceding 24-hour horizon. Within that design, the FTX collapse window peaks at 2022-11-08 17:00:00 UTC with a realized one-hour loss of 5.18\%, and the ETF whipsaw peaks at 2024-01-11 15:00:00 UTC with a realized absolute move of 3.75\%. In both cases, the jump-diffusion engine issues the strongest warning profile and lands closest to the realized loss. At the same time, every one-hour VaR model understates the realized event loss by a wide margin, so the stress section should be interpreted as a warning-comparison exercise rather than a claim of exact crisis prediction.
 
-\input{tables/stress_test_overview.tex}
+\begin{center}
+\includegraphics[width=\linewidth]{table_images/stress_test_overview-1.jpg}
+\end{center}
 
-\input{tables/stress_test_warnings.tex}
+\begin{center}
+\includegraphics[width=\linewidth]{table_images/stress_test_warnings-1.jpg}
+\end{center}
 
 \begin{figure}[htbp]
 \centering
@@ -144,21 +152,29 @@ The stress section is designed as a two-window case-study exercise rather than a
 
 The square-root-of-time rule is only partially reliable for Bitcoin. The scaled one-day 99\% VaR is 9.43\% versus an empirical one-day VaR of 8.74\%, while the scaled ten-day VaR is 29.83\% against an empirical ten-day VaR of 27.66\%. Weak linear autocorrelation in raw returns coexists with persistent autocorrelation in absolute returns, which implies that volatility clustering rather than mean predictability is the main reason naive variance scaling can misstate long-horizon risk.
 
-\input{tables/time_scale_scaling.tex}
+\begin{center}
+\includegraphics[width=\linewidth]{table_images/time_scale_scaling-1.jpg}
+\end{center}
 
-\input{tables/autocorrelation_summary.tex}
+\begin{center}
+\includegraphics[width=\linewidth]{table_images/autocorrelation_summary-1.jpg}
+\end{center}
 
 \subsection{Practical Implications}
 
 For a hypothetical \$1 million BTC spot position, the largest 24-hour VaR capital estimate in the current snapshot is \$82,946.43. These are market-risk numbers rather than liquidity-adjusted exit costs. For committee reporting, the jump-diffusion estimates are the more conservative baseline, while the LSTM is more appropriate as an intraday surveillance overlay.
 
-\input{tables/capital_requirements.tex}
+\begin{center}
+\includegraphics[width=\linewidth]{table_images/capital_requirements-1.jpg}
+\end{center}
 
 \subsection{Backtesting}
 
 The last-year backtest evaluates 8,761 one-hour forecasts against a 1\% tail target using both Kupiec's unconditional coverage test and Christoffersen's independence and conditional-coverage diagnostics (Kupiec, 1995; Christoffersen, 1998). The LSTM model secures a conditional-coverage p-value of 0.078, while the Gaussian benchmark posts a Kupiec p-value of 0.000 and a conditional-coverage p-value of 0.000. At the 5\% significance level, the LSTM model is the only specification to pass the conditional-coverage test. That pattern suggests that conditional adaptation is a decisive factor in tail calibration on this holdout window, but it is still evidence about this sample path rather than proof that one specification dominates in every regime.
 
-\input{tables/kupiec_backtest_summary.tex}
+\begin{center}
+\includegraphics[width=\linewidth]{table_images/kupiec_backtest_summary-1.jpg}
+\end{center}
 
 \begin{figure}[htbp]
 \centering
@@ -203,4 +219,12 @@ The main conclusion is that Gaussian hourly VaR is not an adequate benchmark for
 \item Kingma, Diederik P., and Max Welling. 2014. Auto-Encoding Variational Bayes. 2nd International Conference on Learning Representations. DOI: 10.48550/arXiv.1312.6114.
 \end{enumerate}
 
+\subsection{Appendix}
 
+All report-ready tables in the tables directory and all primary analysis figures in the figures directory are already referenced in the main report. The only remaining generated visual artifact is a standalone image version of the method-overview table, produced during document conversion; it is reproduced here for completeness.
+
+\begin{figure}[htbp]
+\centering
+\includegraphics{table_images/method_overview-1.jpg}
+\caption{Unused generated method-overview table image}
+\end{figure}

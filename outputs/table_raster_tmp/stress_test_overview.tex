@@ -1,0 +1,43 @@
+\documentclass[11pt]{article}
+\usepackage[paperwidth=11.7in,paperheight=8.3in,margin=0.2in]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage{array}
+\usepackage{booktabs}
+\usepackage{caption}
+\usepackage{graphicx}
+\usepackage{hyperref}
+\usepackage{longtable}
+\usepackage{lmodern}
+\usepackage{makecell}
+\usepackage[expansion=false]{microtype}
+\usepackage{ragged2e}
+\usepackage{tabularx}
+\usepackage{xurl}
+\setlength{\LTleft}{0pt}
+\setlength{\LTright}{0pt}
+\setlength{\tabcolsep}{2pt}
+\renewcommand{\arraystretch}{0.96}
+\let\oldfootnotesize\footnotesize
+\renewcommand{\footnotesize}{\small}
+\let\oldscriptsize\scriptsize
+\renewcommand{\scriptsize}{\footnotesize}
+\pagestyle{empty}
+\begin{document}
+\begingroup
+\scriptsize
+\setlength{\tabcolsep}{3pt}
+\centering
+\begin{tabularx}{0.98\linewidth}{@{}>{\RaggedRight\arraybackslash}p{0.28\linewidth}>{\RaggedLeft\arraybackslash}X>{\RaggedLeft\arraybackslash}X@{}}
+\toprule
+Metric & FTX Collapse & ETF whipsaw \\
+\midrule
+Event time & 2022-11-08 17:00:00 UTC & 2024-01-11 15:00:00 UTC\\
+Realized return & -0.0518 & -0.0375\\
+Realized loss & 0.0518 & 0.0375\\
+t-VaR loss & 0.0145 & 0.0123\\
+MC VaR loss & 0.0163 & 0.0129\\
+Closest model & Jump-diffusion MC & Jump-diffusion MC\\
+\bottomrule
+\end{tabularx}
+\endgroup
+\end{document}

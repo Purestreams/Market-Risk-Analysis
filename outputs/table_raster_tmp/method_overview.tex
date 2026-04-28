@@ -1,0 +1,34 @@
+\documentclass[11pt]{article}
+\usepackage[margin=0.25in]{geometry}
+\usepackage{array}
+\usepackage{booktabs}
+\usepackage{caption}
+\usepackage{graphicx}
+\usepackage{hyperref}
+\usepackage{longtable}
+\usepackage{lmodern}
+\usepackage{makecell}
+\usepackage[expansion=false]{microtype}
+\usepackage{ragged2e}
+\usepackage{tabularx}
+\usepackage{xurl}
+\pagestyle{empty}
+\begin{document}
+\begingroup
+\small
+\setlength{\tabcolsep}{4pt}
+\begin{center}
+\begin{tabularx}{0.98\linewidth}{@{}>{\RaggedRight\arraybackslash}p{0.10\linewidth}>{\RaggedRight\arraybackslash}p{0.18\linewidth}>{\RaggedRight\arraybackslash}X>{\RaggedRight\arraybackslash}X@{}}
+\toprule
+Method & Model & Primary role & Main trade-off \\
+\midrule
+A & Gaussian VaR & Thin-tailed rolling benchmark used to test whether a Gaussian assumption is adequate. & Transparent baseline, but structurally weak under heavy tails and volatility clustering. \\
+B & Student-t VaR & Parametric heavy-tail benchmark using a rolling return window. & Transparent and fast, but only weakly conditional on current market state. \\
+C & Jump-diffusion Monte Carlo & Scenario engine that combines continuous diffusion with discrete jump risk. & More realistic under stress, but sensitive to jump-calibration choices. \\
+D & LSTM Gaussian head & Feature-conditioned one-step forecast of mean and volatility. & Adaptive to regime shifts, but harder to validate and explain. \\
+E & VAE latent sampling & Generative model for synthetic return scenarios and latent tail structure. & Useful for scenario enrichment, but weaker as a standalone production VaR engine. \\
+\bottomrule
+\end{tabularx}
+\end{center}
+\endgroup
+\end{document}

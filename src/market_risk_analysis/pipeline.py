@@ -242,6 +242,8 @@ def compute_descriptive_statistics(returns: pd.Series) -> dict[str, float]:
     clean_returns = returns.dropna()
     jb_stat, jb_pvalue = stats.jarque_bera(clean_returns)
     adf_stat, adf_pvalue, _, _, critical_values, _ = adfuller(clean_returns)
+    overall_var_return = float(clean_returns.quantile(1 - DEFAULT_CONFIDENCE))
+    overall_cvar_return = float(clean_returns[clean_returns <= overall_var_return].mean())
     return {
         "observations": float(len(clean_returns)),
         "mean": float(clean_returns.mean()),
@@ -259,6 +261,8 @@ def compute_descriptive_statistics(returns: pd.Series) -> dict[str, float]:
         "max": float(clean_returns.max()),
         "p01": float(clean_returns.quantile(0.01)),
         "p99": float(clean_returns.quantile(0.99)),
+        "overall_var_loss": float(-overall_var_return),
+        "overall_cvar_loss": float(-overall_cvar_return),
     }
 
 
@@ -2056,6 +2060,43 @@ def format_report_table(frame: pd.DataFrame, rename_columns: dict[str, str] | No
     return display_frame
 
 
+def build_var_requirement_summary(descriptive_stats: dict[str, float], current_var_table: pd.DataFrame) -> pd.DataFrame:
+    one_hour_current = current_var_table[current_var_table["horizon_hours"] == 1]
+    conservative_row = one_hour_current.sort_values("VaR_loss", ascending=False).iloc[0]
+    lstm_row = one_hour_current[one_hour_current["model"] == "LSTM"].iloc[0]
+    return pd.DataFrame(
+        [
+            {
+                "Scope": "Overall empirical",
+                "Basis": "Full-sample historical distribution",
+                "Horizon (h)": 1,
+                "VaR loss": descriptive_stats["overall_var_loss"],
+                "CVaR loss": descriptive_stats["overall_cvar_loss"],
+                "Mean ret.": descriptive_stats["mean"],
+                "Interpretation": "Average unconditional one-hour tail risk over the full sample.",
+            },
+            {
+                "Scope": "Conditional forecast",
+                "Basis": f"{report_label(str(conservative_row['model']), REPORT_MODEL_LABELS)} current forecast",
+                "Horizon (h)": 1,
+                "VaR loss": conservative_row["VaR_loss"],
+                "CVaR loss": conservative_row["CVaR_loss"],
+                "Mean ret.": conservative_row["mean_return"],
+                "Interpretation": "Most conservative current one-hour forecast across model families.",
+            },
+            {
+                "Scope": "Conditional forecast",
+                "Basis": "LSTM current forecast",
+                "Horizon (h)": 1,
+                "VaR loss": lstm_row["VaR_loss"],
+                "CVaR loss": lstm_row["CVaR_loss"],
+                "Mean ret.": lstm_row["mean_return"],
+                "Interpretation": "Feature-conditioned one-step forecast using the latest market state.",
+            },
+        ]
+    )
+
+
 def write_latex_table(
     path: Path,
     frame: pd.DataFrame,
@@ -2252,6 +2293,7 @@ def export_analysis_tables(
             }
         )
     )
+    var_requirement_display = format_report_table(build_var_requirement_summary(descriptive_stats, current_var_table))
     model_tuning_display = format_report_table(
         model_tuning_summary.rename(
             columns={
@@ -2419,6 +2461,14 @@ def export_analysis_tables(
             "@{}>{\\RaggedRight\\arraybackslash}p{0.18\\linewidth}*{7}{>{\\RaggedLeft\\arraybackslash}p{0.09\\linewidth}}@{}",
             "scriptsize",
             "2pt",
+        ),
+        (
+            "overall_conditional_var_summary.tex",
+            var_requirement_display,
+            4,
+            "@{}>{\\RaggedRight\\arraybackslash}p{0.13\\linewidth}>{\\RaggedRight\\arraybackslash}p{0.23\\linewidth}*{4}{>{\\RaggedLeft\\arraybackslash}p{0.09\\linewidth}}>{\\RaggedRight\\arraybackslash}p{0.24\\linewidth}@{}",
+            "scriptsize",
+            "1pt",
         ),
         (
             "model_tuning_summary.tex",
@@ -2693,6 +2743,7 @@ def render_report(
             "volatility": "volatility",
         },
     )
+    var_requirement_display = format_report_table(build_var_requirement_summary(descriptive_stats, current_var_table))
     model_tuning_display = format_report_table(
         model_tuning_summary,
         {
@@ -2783,6 +2834,12 @@ where $T$ is the number of forecasts, $x$ is the number of VaR violations, and $
 {sections['results']}
 
 {to_markdown_table(current_var_display)}
+
+### Overall and Conditional VaR Summary
+
+{sections['var_requirement_summary']}
+
+{to_markdown_table(var_requirement_display)}
 
 ![Monte Carlo paths](figures/{figure_paths['monte_carlo_paths']})
 
@@ -2897,6 +2954,9 @@ def build_report_sections(
     student_t_row = current_var_table[
         (current_var_table["model"] == "Parametric Student-t") & (current_var_table["horizon_hours"] == 1)
     ].iloc[0]
+    requirement_summary = build_var_requirement_summary(descriptive_stats, current_var_table)
+    overall_row = requirement_summary.loc[requirement_summary["Scope"] == "Overall empirical"].iloc[0]
+    conditional_row = requirement_summary.loc[requirement_summary["Scope"] == "Conditional forecast"].iloc[0]
     backtest_by_model = backtest_summary.set_index("model")
     gaussian_backtest = backtest_by_model.loc["Gaussian benchmark"]
 
@@ -2953,6 +3013,10 @@ def build_report_sections(
             f"Over the full sample, Bitcoin delivered a cumulative price change of {cumulative_return:.2%}. In the current forecast snapshot, the one-hour VaR rankings differ materially by methodology, with the most conservative 99% estimate coming from {report_label(str(conservative_row['model']), REPORT_MODEL_LABELS)} at {conservative_row['VaR_loss']:.2%}. The Gaussian benchmark currently reports a one-hour VaR loss of {gaussian_row['VaR_loss']:.2%}, versus {student_t_row['VaR_loss']:.2%} for the Student-t benchmark estimated on the same rolling history. "
             "The Student-t model remains the most interpretable heavy-tail baseline, the jump-diffusion engine provides the most stress-aware structural scenarios, and the LSTM contributes the most explicitly conditional one-step signal. Because the recurrent model is estimated as a one-step conditional forecaster, the 24-hour comparison table includes only models that directly produce multi-period distributions through aggregation or simulation."
         ),
+        "var_requirement_summary": (
+            f"The overall VaR is measured from the full historical return distribution: the one-hour 99% empirical VaR loss is {overall_row['VaR loss']:.2%}, with a corresponding empirical CVaR loss of {overall_row['CVaR loss']:.2%}. "
+            f"The conditional VaR requirement is met by the current one-hour forecasts; the most conservative current estimate is {conditional_row['Basis']} with a 99% VaR loss of {conditional_row['VaR loss']:.2%} and CVaR loss of {conditional_row['CVaR loss']:.2%}. The LSTM row is also retained because it is explicitly conditioned on the latest feature state."
+        ),
         "sensitivity": (
             f"Sensitivity analysis confirms the expected widening of downside risk as confidence moves from 95% to 99%. At 99%, the largest one-hour VaR loss remains {conservative_row['VaR_loss']:.2%}. "
             "The Gaussian row in the confidence table provides the thin-tailed benchmark, the Student-t parameter sweep shows that lower degrees of freedom amplify tail losses in a nonlinear way, and the LSTM look-back sweep shows a trade-off between responsiveness and stability."
@@ -2982,7 +3046,7 @@ def build_report_sections(
             "The main conclusion is that Gaussian hourly VaR is not an adequate benchmark for Bitcoin. Heavy-tailed parametric modeling, jump-aware simulation, and conditional neural forecasting all add economically meaningful information relative to a thin-tailed variance-only baseline. In this project, the jump-diffusion engine is the strongest conservative scenario benchmark, while the LSTM is the strongest one-hour conditional overlay on the final holdout year under the current conditional-coverage diagnostics."
         ),
         "appendix": (
-            "The appendix figures support the report's main claims visually. The volatility-clustering scatter plot shows persistence in absolute returns, the normal Q-Q panel shows substantial tail deviation from Gaussian behavior, the backtest figure shows the relative responsiveness of each VaR series, and the generated-return panels illustrate how the neural models differ in purpose from the parametric baselines."
+            "All report-ready tables in the tables directory and all primary analysis figures in the figures directory are already referenced in the main report. The only remaining generated visual artifact is a standalone image version of the method-overview table, produced during document conversion; it is reproduced here for completeness."
         ),
     }
 
@@ -3101,6 +3165,12 @@ The report complements this with Christoffersen-style independence and condition
 
 \\input{{tables/current_var_estimates.tex}}
 
+\subsubsection*{{Overall and Conditional VaR Summary}}
+
+{paragraph(sections['var_requirement_summary'])}
+
+\input{{tables/overall_conditional_var_summary.tex}}
+
 \\begin{{figure}}[htbp]
 \\centering
 \\includegraphics{{figures/{figure_paths['monte_carlo_paths']}}}
@@ -3194,6 +3264,12 @@ The report complements this with Christoffersen-style independence and condition
 \\subsection{{Appendix}}
 
 {paragraph(sections['appendix'])}
+
+\begin{{figure}}[htbp]
+\centering
+\includegraphics{{table_images/method_overview-1.jpg}}
+\caption{{Unused generated method-overview table image}}
+\end{{figure}}
 """
 
 
